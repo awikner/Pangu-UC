@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import numpy as np
 
 
 class PatchEmbed2D(nn.Module):
@@ -18,11 +19,12 @@ class PatchEmbed2D(nn.Module):
         super().__init__()
         self.img_size = img_size
         height, width = img_size
-        h_patch_size, w_path_size = patch_size
+        h_patch_size, w_patch_size = patch_size
+        self.output_size = (int(np.ceil(height / h_patch_size)), int(np.ceil(width / w_patch_size)))
         padding_left = padding_right = padding_top = padding_bottom = 0
 
         h_remainder = height % h_patch_size
-        w_remainder = width % w_path_size
+        w_remainder = width % w_patch_size
 
         if h_remainder:
             h_pad = h_patch_size - h_remainder
@@ -30,7 +32,7 @@ class PatchEmbed2D(nn.Module):
             padding_bottom = int(h_pad - padding_top)
 
         if w_remainder:
-            w_pad = w_path_size - w_remainder
+            w_pad = w_patch_size - w_remainder
             padding_left = w_pad // 2
             padding_right = int(w_pad - padding_left)
 
@@ -69,10 +71,12 @@ class PatchEmbed3D(nn.Module):
         self.img_size = img_size
         level, height, width = img_size
         l_patch_size, h_patch_size, w_patch_size = patch_size
+        self.output_size = (int(np.ceil(level / l_patch_size)), int(np.ceil(height / h_patch_size)),
+                            int(np.ceil(width / w_patch_size)))
         padding_left = padding_right = padding_top = padding_bottom = padding_front = padding_back = 0
 
         l_remainder = level % l_patch_size
-        h_remainder = height % l_patch_size
+        h_remainder = height % h_patch_size
         w_remainder = width % w_patch_size
 
         if l_remainder:

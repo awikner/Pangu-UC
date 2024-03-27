@@ -23,9 +23,11 @@ class UpSample(nn.Module):
         output_resolution (tuple[int]): [pressure levels, latitude, longitude]
     """
 
-    def __init__(self, in_dim, out_dim, input_resolution, output_resolution):
+    def __init__(self, in_dim, out_dim, input_resolution, output_resolution, upsample_factor = 2):
         super().__init__()
-        self.linear1 = nn.Linear(in_dim, out_dim * 4, bias=False)
+
+        self.upsample_factor = upsample_factor
+        self.linear1 = nn.Linear(in_dim, out_dim * (upsample_factor ** 2), bias=False)
         self.linear2 = nn.Linear(out_dim, out_dim, bias=False)
         self.norm = nn.LayerNorm(out_dim)
         self.input_resolution = input_resolution
@@ -41,12 +43,13 @@ class UpSample(nn.Module):
         out_pl, out_lat, out_lon = self.output_resolution
 
         x = self.linear1(x)
-        x = x.reshape(B, in_pl, in_lat, in_lon, 2, 2, C // 2).permute(0, 1, 2, 4, 3, 5, 6)
-        x = x.reshape(B, in_pl, in_lat * 2, in_lon * 2, -1)
+        x = x.reshape(B, in_pl, in_lat, in_lon, self.upsample_factor, self.upsample_factor, C // self.upsample_factor).\
+            permute(0, 1, 2, 4, 3, 5, 6)
+        x = x.reshape(B, in_pl, in_lat * self.upsample_factor, in_lon * self.upsample_factor, -1)
 
         assert in_pl == out_pl, "the dimension of pressure level shouldn't change"
-        pad_h = in_lat * 2 - out_lat
-        pad_w = in_lon * 2 - out_lon
+        pad_h = in_lat * self.upsample_factor - out_lat
+        pad_w = in_lon * self.upsample_factor - out_lon
 
         pad_top = pad_h // 2
         pad_bottom = pad_h - pad_top
@@ -54,7 +57,7 @@ class UpSample(nn.Module):
         pad_left = pad_w // 2
         pad_right = pad_w - pad_left
 
-        x = x[:, :out_pl, pad_top: 2 * in_lat - pad_bottom, pad_left: 2 * in_lon - pad_right, :]
+        x = x[:, :out_pl, pad_top: self.upsample_factor * in_lat - pad_bottom, pad_left: self.upsample_factor * in_lon - pad_right, :]
         x = x.reshape(x.shape[0], x.shape[1] * x.shape[2] * x.shape[3], x.shape[4])
         x = self.norm(x)
         x = self.linear2(x)
@@ -72,10 +75,11 @@ class DownSample(nn.Module):
         output_resolution (tuple[int]): [pressure levels, latitude, longitude]
     """
 
-    def __init__(self, in_dim, input_resolution, output_resolution):
+    def __init__(self, in_dim, input_resolution, output_resolution, downsample_factor = 2):
         super().__init__()
-        self.linear = nn.Linear(in_dim * 4, in_dim * 2, bias=False)
-        self.norm = nn.LayerNorm(4 * in_dim)
+        self.downsample_factor = downsample_factor
+        self.linear = nn.Linear(in_dim * (self.downsample_factor ** 2), in_dim * self.downsample_factor, bias=False)
+        self.norm = nn.LayerNorm((self.downsample_factor ** 2) * in_dim)
         self.input_resolution = input_resolution
         self.output_resolution = output_resolution
 
@@ -83,8 +87,8 @@ class DownSample(nn.Module):
         out_pl, out_lat, out_lon = self.output_resolution
 
         assert in_pl == out_pl, "the dimension of pressure level shouldn't change"
-        h_pad = out_lat * 2 - in_lat
-        w_pad = out_lon * 2 - in_lon
+        h_pad = out_lat * self.downsample_factor - in_lat
+        w_pad = out_lon * self.downsample_factor - in_lon
 
         pad_top = h_pad // 2
         pad_bottom = h_pad - pad_top
@@ -106,8 +110,9 @@ class DownSample(nn.Module):
 
         # Padding the input to facilitate downsampling
         x = self.pad(x.permute(0, -1, 1, 2, 3)).permute(0, 2, 3, 4, 1)
-        x = x.reshape(B, in_pl, out_lat, 2, out_lon, 2, C).permute(0, 1, 2, 4, 3, 5, 6)
-        x = x.reshape(B, out_pl * out_lat * out_lon, 4 * C)
+        x = x.reshape(B, in_pl, out_lat, self.downsample_factor, out_lon, self.downsample_factor, C).\
+            permute(0, 1, 2, 4, 3, 5, 6)
+        x = x.reshape(B, out_pl * out_lat * out_lon, (self.downsample_factor ** 2) * C)
 
         x = self.norm(x)
         x = self.linear(x)
@@ -345,6 +350,125 @@ class BasicLayer(nn.Module):
         for blk in self.blocks:
             x = blk(x)
         return x
+
+class PanguPlasim(nn.Module):
+    """
+    A general implementation of the Pangu-Weather model for `Pangu-Weather: A 3D High-Resolution Model for Fast and Accurate Global Weather Forecast`
+    - https://arxiv.org/abs/2211.02556
+
+    Args:
+        embed_dim (int): Patch embedding dimension. Default: 192
+        num_heads (tuple[int]): Number of attention heads in different layers.
+        window_size (tuple[int]): Window size.
+    """
+
+    def __init__(self, embed_dim=192, horizontal_resolution = (64, 128), num_levels = 10, num_atmo_vars = 5,
+                 num_surface_vars = 4, num_boundary_vars = 3, patch_size = (2,4,4),
+                 num_heads=(6, 12, 12, 6), window_size=(2, 6, 12), depths = (2, 6, 6, 2), drop_path = None,
+                 updown_scale_factor = 2):
+        super().__init__()
+        if not drop_path:
+            drop_path = np.append(np.linspace(0, 0.2, np.sum(depths[:2])),
+                np.linspace(0.2, 0, np.sum(depths[2:]))).tolist()
+        atmo_resolution = tuple([num_levels]) + horizontal_resolution
+        depths_cumsum = np.cumsum(depths).astype(int)
+        # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
+        self.patchembed2d = PatchEmbed2D(
+            img_size=horizontal_resolution,
+            patch_size=patch_size[1:],
+            in_chans=num_surface_vars + num_boundary_vars,  # add
+            embed_dim=embed_dim,
+        )
+        self.patchembed3d = PatchEmbed3D(
+            img_size=atmo_resolution,
+            patch_size=patch_size,
+            in_chans=num_atmo_vars,
+            embed_dim=embed_dim
+        )
+        EST_input_resolution = (self.patchembed3d.output_size[0]+1, self.patchembed3d.output_size[1],
+                                self.patchembed3d.output_size[2])
+        downscale_resolution = (self.patchembed3d.output_size[0]+1,
+                                (self.patchembed2d.output_size[0] - self.patchembed2d.output_size[0] % updown_scale_factor) \
+                                // updown_scale_factor + self.patchembed2d.output_size[0] % updown_scale_factor,
+                                (self.patchembed2d.output_size[1] - self.patchembed2d.output_size[1] % updown_scale_factor) \
+                                // updown_scale_factor + self.patchembed2d.output_size[1] % updown_scale_factor)
+
+        self.layer1 = BasicLayer(
+            dim=embed_dim,
+            input_resolution=EST_input_resolution,
+            depth=depths[0],
+            num_heads=num_heads[0],
+            window_size=window_size,
+            drop_path=drop_path[:depths_cumsum[0]]
+        )
+        self.downsample = DownSample(in_dim=embed_dim,
+                                     input_resolution=EST_input_resolution,
+                                     output_resolution=downscale_resolution, downsample_factor=updown_scale_factor)
+        self.layer2 = BasicLayer(
+            dim=embed_dim * updown_scale_factor,
+            input_resolution=downscale_resolution,
+            depth=depths[1],
+            num_heads=num_heads[1],
+            window_size=window_size,
+            drop_path=drop_path[depths_cumsum[0]:depths_cumsum[1]]
+        )
+        self.layer3 = BasicLayer(
+            dim=embed_dim * updown_scale_factor,
+            input_resolution=downscale_resolution,
+            depth=depths[2],
+            num_heads=num_heads[2],
+            window_size=window_size,
+            drop_path=drop_path[depths_cumsum[1]:depths_cumsum[2]]
+        )
+        self.upsample = UpSample(embed_dim * updown_scale_factor, embed_dim,
+                                 downscale_resolution, (self.patchembed3d.output_size[0]+1,
+                                                       self.patchembed3d.output_size[1],
+                                                       self.patchembed3d.output_size[2]))
+        self.layer4 = BasicLayer(
+            dim=embed_dim,
+            input_resolution=EST_input_resolution,
+            depth=depths[3],
+            num_heads=num_heads[3],
+            window_size=window_size,
+            drop_path=drop_path[depths_cumsum[2]:]
+        )
+        # The outputs of the 2nd encoder layer and the 7th decoder layer are concatenated along the channel dimension.
+        self.patchrecovery2d = PatchRecovery2D(horizontal_resolution, patch_size[1:], 2 * embed_dim, num_surface_vars)
+        self.patchrecovery3d = PatchRecovery3D(atmo_resolution, patch_size, 2 * embed_dim, num_atmo_vars)
+
+    def forward(self, surface, surface_mask, upper_air):
+        """
+        Args:
+            surface (torch.Tensor): 2D n_lat=721, n_lon=1440, chans=4.
+            surface_mask (torch.Tensor): 2D n_lat=721, n_lon=1440, chans=3.
+            upper_air (torch.Tensor): 3D n_pl=13, n_lat=721, n_lon=1440, chans=5.
+        """
+        surface = torch.concat([surface, surface_mask.unsqueeze(0)], dim=1)
+        surface = self.patchembed2d(surface)
+        upper_air = self.patchembed3d(upper_air)
+
+        x = torch.concat([surface.unsqueeze(2), upper_air], dim=2)
+        B, C, Pl, Lat, Lon = x.shape
+        x = x.reshape(B, C, -1).transpose(1, 2)
+
+        x = self.layer1(x)
+
+        skip = x
+
+        x = self.downsample(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.upsample(x)
+        x = self.layer4(x)
+
+        output = torch.concat([x, skip], dim=-1)
+        output = output.transpose(1, 2).reshape(B, -1, Pl, Lat, Lon)
+        output_surface = output[:, :, 0, :, :]
+        output_upper_air = output[:, :, 1:, :, :]
+
+        output_surface = self.patchrecovery2d(output_surface)
+        output_upper_air = self.patchrecovery3d(output_upper_air)
+        return output_surface, output_upper_air
 
 
 class Pangu(nn.Module):

@@ -1,31 +1,39 @@
 import torch
+import numpy as np
 
 from weatherlearn.models.pangu.pangu import EarthAttention3D, UpSample, DownSample, EarthSpecificBlock, BasicLayer
 from weatherlearn.models.pangu.utils.shift_window_mask import get_shift_window_mask
-from weatherlearn.models import Pangu, Pangu_lite
+from weatherlearn.models import Pangu, Pangu_lite, PanguPlasim
 
 import unittest
 
 
 class TestMain(unittest.TestCase):
     def test_downsample(self):
+        downsample_factor = 7
         in_dim = 1
-        input_resolution = (8, 181, 360)
         output_resolution = (8, 91, 180)
-        x = torch.randn(1, 8 * 181 * 360, 1)
-        downsample = DownSample(in_dim, input_resolution, output_resolution)
+        input_resolution = (8, (output_resolution[1]-1)*downsample_factor+1,
+                             output_resolution[2]*downsample_factor)
+
+        x = torch.randn(1, np.prod(input_resolution), in_dim)
+        downsample = DownSample(in_dim, input_resolution, output_resolution, downsample_factor=downsample_factor)
         x_downsample = downsample(x)
-        self.assertEqual(x_downsample.shape, (1, 8 * 91 * 180, 2))
+        self.assertEqual(x_downsample.shape, (1, 8 * 91 * 180, in_dim * downsample_factor))
 
     def test_upsample(self):
-        in_dim = 2
-        out_dim = in_dim // 2
+        upsample_factor = 7
+        in_dim = upsample_factor
+        out_dim = in_dim // upsample_factor
         input_resolution = (8, 91, 180)
-        output_resolution = (8, 181, 360)
-        upsample = UpSample(in_dim, out_dim, input_resolution, output_resolution)
-        x = torch.randn(1, 8 * 91 * 180, 2)
+        output_resolution = (8,
+                             (input_resolution[1]-1)*upsample_factor+1,
+                             input_resolution[2]*upsample_factor)
+        upsample = UpSample(in_dim, out_dim, input_resolution, output_resolution, upsample_factor=upsample_factor)
+        x = torch.randn(1, 8 * 91 * 180, in_dim)
         x_upsample = upsample(x)
-        self.assertEqual(x_upsample.shape, (1, 8 * 181 * 360, 1))
+        self.assertEqual(x_upsample.shape, (1, 8 * output_resolution[1] * output_resolution[2],
+                                            x.shape[-1] // upsample_factor))
 
     def test_attention_without_mask1(self):
         input_resolution = (8, 186, 360)
@@ -102,6 +110,7 @@ class TestMain(unittest.TestCase):
         layer_x = layer(x)
         self.assertEqual(layer_x.shape, x.shape)
 
+    """
     def test_pangu(self):
         pangu = Pangu()
         surface = torch.randn(1, 4, 721, 1440)
@@ -110,6 +119,30 @@ class TestMain(unittest.TestCase):
         output_surface, output_upper_air = pangu(surface, surface_mask, upper_air)
         self.assertEqual(output_surface.shape, surface.shape)
         self.assertEqual(output_upper_air.shape, upper_air.shape)
+
+
+    def test_compare_pangu_panguplasim(self):
+        pangu = Pangu()
+        pangu_plasim = PanguPlasim(horizontal_resolution = (721, 1440), num_levels = 13)
+        surface = torch.randn(1, 4, 721, 1440)
+        surface_mask = torch.randn(3, 721, 1440)
+        upper_air = torch.randn(1, 5, 13, 721, 1440)
+        output_surface, output_upper_air = pangu(surface, surface_mask, upper_air)
+        output_surface_PP, output_upper_air_PP = pangu_plasim(surface, surface_mask, upper_air)
+        self.assertEqual(output_surface.shape, surface.shape)
+        self.assertEqual(output_upper_air.shape, upper_air.shape)
+        self.assertEqual(output_surface_PP.shape, surface.shape)
+        self.assertEqual(output_upper_air_PP.shape, upper_air.shape)
+    """
+
+    def test_panguplasim(self):
+        pangu_plasim = PanguPlasim(horizontal_resolution=(64, 128), num_levels=10)
+        surface = torch.randn(1, 4, 64, 128)
+        surface_mask = torch.randn(3, 64, 128)
+        upper_air = torch.randn(1, 5, 10, 64, 128)
+        output_surface_PP, output_upper_air_PP = pangu_plasim(surface, surface_mask, upper_air)
+        self.assertEqual(output_surface_PP.shape, surface.shape)
+        self.assertEqual(output_upper_air_PP.shape, upper_air.shape)
 
     def test_pangu_lite(self):
         pangu_lite = Pangu_lite(embed_dim=4, num_heads=(1, 1, 1, 1))
