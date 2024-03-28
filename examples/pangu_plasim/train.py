@@ -11,11 +11,11 @@ import pandas as pd
 import sys
 sys.path.append("../../")
 
-from weatherlearn.models import PanguPlasimModulus
+from weatherlearn.models import PanguPlasim
 from data_utils import DatasetFromFolder, surface_inv_transform, upper_air_inv_transform
 
 
-parser = argparse.ArgumentParser(description="Train PanguPlasim Model")
+parser = argparse.ArgumentParser(description="Train PanguUC Model")
 parser.add_argument("--num_epochs", default=200, type=int, help="train epoch number")
 
 
@@ -33,14 +33,14 @@ if __name__ == "__main__":
     surface_mask = torch.stack([land_mask, soil_type, topography], dim=0)  # C Lat Lon
     lat, lon = train_set.get_lat_lon()
 
-    pangu_lite = Pangu_lite()
-    print("# parameters: ", sum(param.numel() for param in pangu_lite.parameters()))
+    pangu_uc = PanguPlasim()
+    print("# parameters: ", sum(param.numel() for param in pangu_uc.parameters()))
 
     surface_criterion = nn.L1Loss()
     upper_air_criterion = nn.L1Loss()
 
     if torch.cuda.is_available():
-        pangu_lite.cuda()
+        pangu_uc.cuda()
         surface_criterion.cuda()
         upper_air_criterion.cuda()
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     upper_air_invTrans, upper_air_variables, upper_air_pLevels = upper_air_inv_transform("data/upper_air_mean.pkl", "data/upper_air_std.pkl")
 
     # The learning rate is 5e-4 as in the paper, while the weight decay is 3e-6
-    optimizer = torch.optim.Adam(pangu_lite.parameters(), lr=5e-4, weight_decay=3e-6)
+    optimizer = torch.optim.Adam(pangu_uc.parameters(), lr=5e-4, weight_decay=3e-6)
 
     results = {'loss': [], 'surface_mse': [], 'upper_air_mse': []}
 
@@ -58,7 +58,7 @@ if __name__ == "__main__":
         train_bar = tqdm(train_loader)
         running_results = {"batch_sizes": 0, "loss": 0}
 
-        pangu_lite.train()
+        pangu_uc.train()
         for input_surface, input_upper_air, target_surface, target_upper_air in train_bar:
             batch_size = input_surface.size(0)
             if torch.cuda.is_available():
@@ -67,7 +67,7 @@ if __name__ == "__main__":
                 target_surface = target_surface.cuda()
                 target_upper_air = target_upper_air.cuda()
 
-            output_surface, output_upper_air = pangu_lite(input_surface, surface_mask, input_upper_air)
+            output_surface, output_upper_air = pangu_uc(input_surface, surface_mask, input_upper_air)
 
             optimizer.zero_grad()
             surface_loss = surface_criterion(output_surface, target_surface)
@@ -93,7 +93,7 @@ if __name__ == "__main__":
                     val_target_surface = val_target_surface.cuda()
                     val_target_upper_air = val_target_upper_air.cuda()
 
-                val_output_surface, val_output_upper_air = pangu_lite(val_input_surface, surface_mask, val_input_upper_air)
+                val_output_surface, val_output_upper_air = pangu_uc(val_input_surface, surface_mask, val_input_upper_air)
 
                 val_output_surface = val_output_surface.squeeze(0)  # C Lat Lon
                 val_output_upper_air = val_output_upper_air.squeeze(0)  # C Pl Lat Lon
@@ -113,7 +113,7 @@ if __name__ == "__main__":
                                         (valing_results["surface_mse"] / valing_results["batch_sizes"], valing_results["upper_air_mse"] / valing_results["batch_sizes"]))
         
         os.makedirs("epochs", exist_ok=True)
-        torch.save(pangu_lite.state_dict(), "epochs/pangu_lite_epoch_%d.pth" % (epoch))
+        torch.save(pangu_uc.state_dict(), "epochs/pangu_uc_epoch_%d.pth" % (epoch))
 
         results["loss"].append(running_results["loss"] / running_results["batch_sizes"])
         results["surface_mse"].append(valing_results["surface_mse"] / valing_results["batch_sizes"])
