@@ -15,7 +15,7 @@ from weatherlearn.models import PanguPlasim
 from data_utils import DatasetFromFolder, surface_inv_transform, upper_air_inv_transform
 
 
-parser = argparse.ArgumentParser(description="Train PanguUC Model")
+parser = argparse.ArgumentParser(description="Train Pangu-UC Model")
 parser.add_argument("--num_epochs", default=200, type=int, help="train epoch number")
 
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     surface_mask = torch.stack([land_mask, soil_type, topography], dim=0)  # C Lat Lon
     lat, lon = train_set.get_lat_lon()
 
-    pangu_uc = PanguPlasim()
+    pangu_uc = PanguPlasim(horizontal_resolution = (721, 1440), num_levels = 13)
     print("# parameters: ", sum(param.numel() for param in pangu_uc.parameters()))
 
     surface_criterion = nn.L1Loss()
