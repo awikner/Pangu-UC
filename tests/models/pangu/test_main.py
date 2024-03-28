@@ -1,9 +1,14 @@
 import torch
 import numpy as np
 
+import modulus
+from dataclasses import dataclass
+
+
 from weatherlearn.models.pangu.pangu import EarthAttention3D, UpSample, DownSample, EarthSpecificBlock, BasicLayer
 from weatherlearn.models.pangu.utils.shift_window_mask import get_shift_window_mask
 from weatherlearn.models import Pangu, Pangu_lite, PanguPlasim
+from weatherlearn.models.pangu.pangu import PanguPlasimModulus
 
 import unittest
 
@@ -135,14 +140,20 @@ class TestMain(unittest.TestCase):
         self.assertEqual(output_upper_air_PP.shape, upper_air.shape)
     """
 
-    def test_panguplasim(self):
+    def test_panguplasim_modulus(self):
         pangu_plasim = PanguPlasim(horizontal_resolution=(64, 128), num_levels=10)
+        pangu_plasim_modulus = PanguPlasimModulus(horizontal_resolution=(64, 128), num_levels=10)
         surface = torch.randn(1, 4, 64, 128)
         surface_mask = torch.randn(3, 64, 128)
         upper_air = torch.randn(1, 5, 10, 64, 128)
         output_surface_PP, output_upper_air_PP = pangu_plasim(surface, surface_mask, upper_air)
+        output_surface_PPM, output_upper_air_PPM = pangu_plasim_modulus(surface, surface_mask, upper_air)
         self.assertEqual(output_surface_PP.shape, surface.shape)
         self.assertEqual(output_upper_air_PP.shape, upper_air.shape)
+        print('PyTorch pangu_plasim okay!')
+        self.assertEqual(output_surface_PPM.shape, surface.shape)
+        self.assertEqual(output_upper_air_PPM.shape, upper_air.shape)
+        print('Modulus pangu_plasim okay!')
 
     def test_pangu_lite(self):
         pangu_lite = Pangu_lite(embed_dim=4, num_heads=(1, 1, 1, 1))
