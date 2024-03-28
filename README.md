@@ -1,15 +1,10 @@
-# WeatherLearn
-<div align="center">
-<img src="pic/logo.png" width="30%" height="30%">
-</div>
-Implementation of the PyTorch version of the Weather Deep Learning Model Zoo.
+# Pangu-UC (forked from WeatherLearn)
+
+
 
 ## Dependencies
 ```
-python = "^3.11"
-torch = "2.1.0"
-timm = "0.9.10"
-numpy = "1.23.5"
+Curent version was tested with cuda 11.8. See `environment.yml` for all required python packages. Currently, installation only works on Linux machines.
 ```
 
 ## Model-zoo
