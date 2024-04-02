@@ -368,13 +368,14 @@ class PanguPlasim(nn.Module):
     def __init__(self, embed_dim=192, horizontal_resolution = (64, 128), num_levels = 10, num_atmo_vars = 5,
                  num_surface_vars = 4, num_boundary_vars = 3, patch_size = (2,4,4),
                  num_heads=(6, 12, 12, 6), window_size=(2, 6, 12), depths = (2, 6, 6, 2), drop_path = None,
-                 updown_scale_factor = 2):
+                 updown_scale_factor = 2, predict_delta = True):
         super().__init__()
         if not drop_path:
             drop_path = np.append(np.linspace(0, 0.2, np.sum(depths[:2])),
                 np.linspace(0.2, 0, np.sum(depths[2:]))).tolist()
         atmo_resolution = tuple([num_levels]) + horizontal_resolution
         depths_cumsum = np.cumsum(depths).astype(int)
+        self.predict_delta = predict_delta
         # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
         self.patchembed2d = PatchEmbed2D(
             img_size=horizontal_resolution,
@@ -466,11 +467,22 @@ class PanguPlasim(nn.Module):
 
         output = torch.concat([x, skip], dim=-1)
         output = output.transpose(1, 2).reshape(B, -1, Pl, Lat, Lon)
-        output_surface = output[:, :, 0, :, :]
-        output_upper_air = output[:, :, 1:, :, :]
 
-        output_surface = self.patchrecovery2d(output_surface)
-        output_upper_air = self.patchrecovery3d(output_upper_air)
+        if self.predict_delta:
+            output_surface_delta  = output[:, :, 0, :, :]
+            output_upper_air_delta = output[:, :, 1:, :, :]
+
+            output_surface_delta = self.patchrecovery2d(output_surface_delta)
+            output_upper_air_delta = self.patchrecovery3d(output_upper_air_delta)
+
+            output_surface = surface + output_surface_delta
+            output_upper_air = upper_air + output_upper_air_delta
+        else:
+            output_surface = output[:, :, 0, :, :]
+            output_upper_air = output[:, :, 1:, :, :]
+
+            output_surface = self.patchrecovery2d(output_surface)
+            output_upper_air = self.patchrecovery3d(output_upper_air)
         return output_surface, output_upper_air
 
 @dataclass
@@ -496,13 +508,14 @@ class PanguPlasimModulus(modulus.Module):
     def __init__(self, embed_dim=192, horizontal_resolution = (64, 128), num_levels = 10, num_atmo_vars = 5,
                  num_surface_vars = 4, num_boundary_vars = 3, patch_size = (2,4,4),
                  num_heads=(6, 12, 12, 6), window_size=(2, 6, 12), depths = (2, 6, 6, 2), drop_path = None,
-                 updown_scale_factor = 2):
+                 updown_scale_factor = 2, predict_delta = True):
         super(PanguPlasimModulus, self).__init__(meta=PanguPlasimModulusMetaData())
         if not drop_path:
             drop_path = np.append(np.linspace(0, 0.2, np.sum(depths[:2])),
                 np.linspace(0.2, 0, np.sum(depths[2:]))).tolist()
         atmo_resolution = tuple([num_levels]) + horizontal_resolution
         depths_cumsum = np.cumsum(depths).astype(int)
+        self.predict_delta = predict_delta
         # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
         self.patchembed2d = PatchEmbed2D(
             img_size=horizontal_resolution,
@@ -594,11 +607,21 @@ class PanguPlasimModulus(modulus.Module):
 
         output = torch.concat([x, skip], dim=-1)
         output = output.transpose(1, 2).reshape(B, -1, Pl, Lat, Lon)
-        output_surface = output[:, :, 0, :, :]
-        output_upper_air = output[:, :, 1:, :, :]
+        if self.predict_delta:
+            output_surface_delta = output[:, :, 0, :, :]
+            output_upper_air_delta = output[:, :, 1:, :, :]
 
-        output_surface = self.patchrecovery2d(output_surface)
-        output_upper_air = self.patchrecovery3d(output_upper_air)
+            output_surface_delta = self.patchrecovery2d(output_surface_delta)
+            output_upper_air_delta = self.patchrecovery3d(output_upper_air_delta)
+
+            output_surface = surface + output_surface_delta
+            output_upper_air = upper_air + output_upper_air_delta
+        else:
+            output_surface = output[:, :, 0, :, :]
+            output_upper_air = output[:, :, 1:, :, :]
+
+            output_surface = self.patchrecovery2d(output_surface)
+            output_upper_air = self.patchrecovery3d(output_upper_air)
         return output_surface, output_upper_air
 
 
