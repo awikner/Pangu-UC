@@ -15,15 +15,17 @@ import pandas as pd
 import sys
 sys.path.append("../../")
 
-from weatherlearn.models import Pangu_lite
+from weatherlearn.models import PanguPlasim
 from data_utils import DatasetFromFolder
 
-parser = argparse.ArgumentParser(description="Train Pangu_lite Models")
+parser = argparse.ArgumentParser(description="Train Pangu_Plasim Models")
 parser.add_argument("--num_epochs", default=50, type=int, help="train epoch number")
 parser.add_argument("--data_dir", type=str, required=True, help="Path to the data directory")
 parser.add_argument("--year_start", type=int, required=True, help="Start year for the data")
 parser.add_argument("--year_end", type=int, required=True, help="End year for the data")
 parser.add_argument("--surface_variables", nargs="+", required=True, help="List of surface variables to include")
+parser.add_argument("--upper_air_variables", nargs="+", required=True, help="List of upper air variables to include")
+parser.add_argument("--boundary_variables", nargs="+", required=True, help="List of boundary variables to include")
 parser.add_argument("--boundary_dir", type=str, default="boundary_variables", help="Directory containing boundary variable files")
 
 if __name__ == "__main__":
@@ -34,31 +36,32 @@ if __name__ == "__main__":
     YEAR_START = opt.year_start
     YEAR_END = opt.year_end
     SURFACE_VARIABLES = opt.surface_variables
+    UPPER_AIR_VARIABLES = opt.upper_air_variables
+    BOUNDARY_VARIABLES = opt.boundary_variables
     BOUNDARY_DIR = opt.boundary_dir
 
-    train_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "train", SURFACE_VARIABLES, BOUNDARY_DIR)
-    val_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "valid", SURFACE_VARIABLES, BOUNDARY_DIR)
+    train_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES, BOUNDARY_VARIABLES, BOUNDARY_DIR)
+    val_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES, BOUNDARY_VARIABLES, BOUNDARY_DIR)
     train_loader = DataLoader(train_set, batch_size=1, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=1, shuffle=False)
 
     lat, lon = train_set.get_lat_lon()
-    boundary_ds = train_set.boundary_ds
 
-    pangu_lite = Pangu_lite()
-    print("# parameters: ", sum(param.numel() for param in pangu_lite.parameters()))
+    PanguPlasim = PanguPlasim()
+    print("# parameters: ", sum(param.numel() for param in PanguPlasim.parameters()))
 
     surface_criterion = nn.L1Loss()
     upper_air_criterion = nn.L1Loss()
 
     if torch.cuda.is_available():
-        pangu_lite.cuda()
+        PanguPlasim.cuda()
         surface_criterion.cuda()
         upper_air_criterion.cuda()
 
     surface_invTrans = train_set.surface_inv_transform()
     upper_air_invTrans = train_set.upper_air_inv_transform()
 
-    optimizer = torch.optim.Adam(pangu_lite.parameters(), lr=5e-4, weight_decay=3e-6)
+    optimizer = torch.optim.Adam(PanguPlasim.parameters(), lr=5e-4, weight_decay=3e-6)
 
     results = {'loss': [], 'surface_mse': [], 'upper_air_mse': []}
 
@@ -66,26 +69,17 @@ if __name__ == "__main__":
         train_bar = tqdm(train_loader)
         running_results = {"batch_sizes": 0, "loss": 0}
 
-        pangu_lite.train()
-        for input_surface, input_upper_air, target_surface, target_upper_air in train_bar:
+        PanguPlasim.train()
+        for input_surface, input_upper_air, target_surface, target_upper_air, boundary_data in train_bar:
             batch_size = input_surface.size(0)
             if torch.cuda.is_available():
                 input_surface = input_surface.cuda()
                 input_upper_air = input_upper_air.cuda()
                 target_surface = target_surface.cuda()
                 target_upper_air = target_upper_air.cuda()
-
-            # Select the boundary variables for this batch
-            start_time = input_surface[0, 0, 0, 0].item()
-            end_time = target_surface[0, 0, 0, 0].item()
-            batch_boundary_ds = boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'),
-                                                            cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
-            boundary_vars = [var for var in batch_boundary_ds.data_vars]
-            boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in boundary_vars], axis=0), dtype=torch.float32)
-            if torch.cuda.is_available():
                 boundary_data = boundary_data.cuda()
 
-            output_surface, output_upper_air = pangu_lite(input_surface, boundary_data, input_upper_air)
+            output_surface, output_upper_air = PanguPlasim(input_surface, boundary_data, input_upper_air)
 
             optimizer.zero_grad()
             surface_loss = surface_criterion(output_surface, target_surface)
@@ -97,30 +91,21 @@ if __name__ == "__main__":
             running_results["loss"] += loss.item() * batch_size
             running_results["batch_sizes"] += batch_size
 
-            train_bar.set_description(desc="[%d/%d] Loss: %.4f" %
-                                      (epoch, NUM_EPOCHS, running_results["loss"] / running_results["batch_sizes"]))
+            train_bar.set_description(desc="[%d/%d] Loss: %.4f" % (epoch, NUM_EPOCHS, running_results["loss"] / running_results["batch_sizes"]))
 
         with torch.no_grad():
             val_bar = tqdm(val_loader)
             valing_results = {"batch_sizes": 0, "surface_mse": 0, "upper_air_mse": 0}
-            for val_input_surface, val_input_upper_air, val_target_surface, val_target_upper_air, times in val_bar:
+            for val_input_surface, val_input_upper_air, val_target_surface, val_target_upper_air, boundary_data, times in val_bar:
                 batch_size = val_input_surface.size(0)
                 if torch.cuda.is_available():
                     val_input_surface = val_input_surface.cuda()
                     val_input_upper_air = val_input_upper_air.cuda()
                     val_target_surface = val_target_surface.cuda()
                     val_target_upper_air = val_target_upper_air.cuda()
-
-                start_time = val_input_surface[0, 0, 0, 0].item()
-                end_time = val_target_surface[0, 0, 0, 0].item()
-                batch_boundary_ds = boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'),
-                                                                cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
-                boundary_vars = [var for var in batch_boundary_ds.data_vars]
-                boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in boundary_vars], axis=0), dtype=torch.float32)
-                if torch.cuda.is_available():
                     boundary_data = boundary_data.cuda()
 
-                val_output_surface, val_output_upper_air = pangu_lite(val_input_surface, boundary_data, val_input_upper_air)
+                val_output_surface, val_output_upper_air = PanguPlasim(val_input_surface, boundary_data, val_input_upper_air)
 
                 val_output_surface = val_output_surface.squeeze(0)
                 val_output_upper_air = val_output_upper_air.squeeze(0)
@@ -136,11 +121,10 @@ if __name__ == "__main__":
                 valing_results["surface_mse"] += surface_mse * batch_size
                 valing_results["upper_air_mse"] += upper_air_mse * batch_size
 
-                val_bar.set_description(desc="[validating] Surface MSE: %.4f Upper Air MSE: %.4f" %
-                                        (valing_results["surface_mse"] / valing_results["batch_sizes"], valing_results["upper_air_mse"] / valing_results["batch_sizes"]))
+                val_bar.set_description(desc="[validating] Surface MSE: %.4f Upper Air MSE: %.4f" % (valing_results["surface_mse"] / valing_results["batch_sizes"], valing_results["upper_air_mse"] / valing_results["batch_sizes"]))
 
         os.makedirs("epochs", exist_ok=True)
-        torch.save(pangu_lite.state_dict(), "epochs/pangu_lite_epoch_%d.pth" % (epoch))
+        torch.save(PanguPlasim.state_dict(), "epochs/pangu_lite_epoch_%d.pth" % (epoch))
 
         results["loss"].append(running_results["loss"] / running_results["batch_sizes"])
         results["surface_mse"].append(valing_results["surface_mse"] / valing_results["batch_sizes"])
@@ -156,4 +140,4 @@ if __name__ == "__main__":
 
         data_frame.to_csv(os.path.join(save_root, "logs.csv"), index_label="Epoch")
 
-# python train.py --data_dir /path/to/data/dir --year_start 2000 --year_end 2010 --surface_variables var1 var2 var3 --boundary_dir boundary_variables
+# python train.py --data_dir /path/to/data/dir --year_start 2000 --year_end 2010 --surface_variables var1 var2 var3 --upper_air_variables var4 var5 var6 --boundary_variables var7 var8 var9 --boundary_dir boundary_variables
