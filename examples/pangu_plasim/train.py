@@ -17,12 +17,23 @@ from data_utils import DatasetFromFolder, surface_inv_transform, upper_air_inv_t
 
 parser = argparse.ArgumentParser(description="Train Pangu-UC Model")
 parser.add_argument("--num_epochs", default=200, type=int, help="train epoch number")
+parser.add_argument("--pred_days", default=5, type=int,
+                    help="days after rmse is evaluated during validation")
+parser.add_argument("--timestep_hours", default=6, type=int, help="lead time for model forecast")
+parser.add_argument("--stability_days", default=30, type=int,
+                    help="days after which climate is evaluated during validation")
+parser.add_argument("--val_frac", default=0.1, type=float,
+                    help="fraction of validation batches where stability and multi-step prediction rmse are evaluated")
 
 
 if __name__ == "__main__":
     opt = parser.parse_args()
 
     NUM_EPOCHS = opt.num_epochs
+    pred_days = opt.pred_days
+    timestep_hours = opt.timestep_hours
+    stability_days = opt.stability_days
+    val_frac = opt.val_frac
 
     train_set = DatasetFromFolder("data", "train")
     val_set = DatasetFromFolder("data", "valid")
@@ -33,7 +44,7 @@ if __name__ == "__main__":
     surface_mask = torch.stack([land_mask, soil_type, topography], dim=0)  # C Lat Lon
     lat, lon = train_set.get_lat_lon()
 
-    pangu_uc = PanguPlasim(horizontal_resolution = (721, 1440), num_levels = 13)
+    pangu_uc = PanguPlasim()
     print("# parameters: ", sum(param.numel() for param in pangu_uc.parameters()))
 
     surface_criterion = nn.L1Loss()
@@ -84,8 +95,12 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             val_bar = tqdm(val_loader)
-            valing_results = {"batch_sizes": 0, "surface_mse": 0, "upper_air_mse": 0} 
-            for val_input_surface, val_input_upper_air, val_target_surface, val_target_upper_air, times in val_bar:
+            valing_results = {"batch_sizes": 0, "surface_rmse": 0, "upper_air_rmse": 0,
+                              "batch_sizes_pred": 0, "surface_%dday_rmse" % pred_days: 0,
+                              "upper_air_%dday_rmse" % pred_days: 0, "stability_%ddays" % stability_days: 0}
+            stab_pred_iter = 0
+            for iter, (val_input_surface, val_input_upper_air, val_target_surface, val_target_upper_air, times) in \
+                    enumerate(val_bar):
                 batch_size = val_input_surface.size(0)
                 if torch.cuda.is_available():
                     val_input_surface = val_input_surface.cuda()
@@ -93,7 +108,8 @@ if __name__ == "__main__":
                     val_target_surface = val_target_surface.cuda()
                     val_target_upper_air = val_target_upper_air.cuda()
 
-                val_output_surface, val_output_upper_air = pangu_uc(val_input_surface, surface_mask, val_input_upper_air)
+                val_output_surface, val_output_upper_air = pangu_uc(val_input_surface, surface_mask,
+                                                                    val_input_upper_air)
 
                 val_output_surface = val_output_surface.squeeze(0)  # C Lat Lon
                 val_output_upper_air = val_output_upper_air.squeeze(0)  # C Pl Lat Lon

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from weatherlearn.models.pangu.pangu import EarthAttention3D, UpSample, DownSample, EarthSpecificBlock, BasicLayer
 from weatherlearn.models.pangu.utils.shift_window_mask import get_shift_window_mask
 from weatherlearn.models import Pangu, Pangu_lite, PanguPlasim
-from weatherlearn.models.pangu.pangu import PanguPlasimModulus
+from weatherlearn.models.pangu.pangu_modulus import PanguPlasimModulus
 
 import unittest
 
