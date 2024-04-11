@@ -1,3 +1,7 @@
+import sys
+sys.path.append('/eagle/lighthouse-uchicago/members/hyadav/Pangu-UC')
+
+import weatherlearn
 import torch
 import numpy as np
 
