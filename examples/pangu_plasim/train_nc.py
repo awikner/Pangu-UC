@@ -27,6 +27,10 @@ parser.add_argument("--surface_variables", nargs="+", required=True, help="List 
 parser.add_argument("--upper_air_variables", nargs="+", required=True, help="List of upper air variables to include")
 parser.add_argument("--boundary_variables", nargs="+", required=True, help="List of boundary variables to include")
 parser.add_argument("--boundary_dir", type=str, default="boundary_variables", help="Directory containing boundary variable files")
+parser.add_argument("--surface_mean", type=str, default="surface_mean.nc", help="Name of surface mean file in datadir")
+parser.add_argument("--surface_std", type=str, default="surface_std.nc", help="Name of surface std file in datadir")
+parser.add_argument("--upper_air_mean", type=str, default="upper_air_mean.nc", help="Name of upper_air mean file in datadir")
+parser.add_argument("--upper_air_std", type=str, default="upper_air_std.nc", help="Name of upper air std file in datadir")
 
 if __name__ == "__main__":
     opt = parser.parse_args()

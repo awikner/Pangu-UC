@@ -27,7 +27,10 @@ def load_mean_std(mean_file, std_file):
    return mean_dict, std_dict
 
 class DatasetFromFolder(Dataset):
-    def __init__(self, data_dir, year_start, year_end, flag, surface_variables=None, upper_air_variables=None, boundary_variables=None, boundary_dir="boundary_variables"):
+    def __init__(self, data_dir, year_start, year_end, flag, surface_variables=None,
+                 upper_air_variables=None, boundary_variables=None, boundary_dir="boundary_variables",
+                 surface_mean_file = "surface_mean.nc", surface_std_file = "surface_std.nc",
+                 upper_air_mean_file = "upper_air_mean.nc", upper_air_std_file = "upper_air_std.nc"):
         super().__init__()
         self.data_dir = data_dir
         self.year_start = year_start
@@ -38,8 +41,8 @@ class DatasetFromFolder(Dataset):
         self.boundary_variables = boundary_variables or []
         self.boundary_dir = boundary_dir
 
-        self.surface_mean, self.surface_std = load_mean_std(join(data_dir, "surface_mean.nc"), join(data_dir, "surface_std.nc"))
-        self.upper_air_mean, self.upper_air_std = load_mean_std(join(data_dir, "upper_air_mean.nc"), join(data_dir, "upper_air_std.nc"))
+        self.surface_mean, self.surface_std = load_mean_std(join(data_dir, surface_mean_file), join(data_dir, surface_std_file))
+        self.upper_air_mean, self.upper_air_std = load_mean_std(join(data_dir, upper_air_mean_file), join(data_dir, upper_air_std_file))
 
         self.surface_transform = self._create_surface_transform()
         self.upper_air_transform = self._create_upper_air_transform()
