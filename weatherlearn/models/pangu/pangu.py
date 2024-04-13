@@ -370,6 +370,9 @@ class PanguPlasim(nn.Module):
         if not drop_path:
             drop_path = np.append(np.linspace(0, 0.2, np.sum(depths[:2])),
                 np.linspace(0.2, 0, np.sum(depths[2:]))).tolist()
+        self.num_surface_vars = num_surface_vars
+        self.num_atmo_vars = num_atmo_vars
+        self.num_boundary_vars = num_boundary_vars
         atmo_resolution = tuple([num_levels]) + horizontal_resolution
         depths_cumsum = np.cumsum(depths).astype(int)
         self.predict_delta = predict_delta
@@ -444,6 +447,9 @@ class PanguPlasim(nn.Module):
             surface_mask (torch.Tensor): 2D n_lat=721, n_lon=1440, chans=3.
             upper_air (torch.Tensor): 3D n_pl=13, n_lat=721, n_lon=1440, chans=5.
         """
+        if self.predict_delta:
+            surface_in = torch.clone(surface)
+            upper_air_in = torch.clone(upper_air)
         surface = torch.concat([surface, surface_mask.unsqueeze(0)], dim=1)
         surface = self.patchembed2d(surface)
         upper_air = self.patchembed3d(upper_air)
@@ -471,9 +477,8 @@ class PanguPlasim(nn.Module):
 
             output_surface_delta = self.patchrecovery2d(output_surface_delta)
             output_upper_air_delta = self.patchrecovery3d(output_upper_air_delta)
-
-            output_surface = surface + output_surface_delta
-            output_upper_air = upper_air + output_upper_air_delta
+            output_surface = surface_in + output_surface_delta
+            output_upper_air = upper_air_in + output_upper_air_delta
         else:
             output_surface = output[:, :, 0, :, :]
             output_upper_air = output[:, :, 1:, :, :]

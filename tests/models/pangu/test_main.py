@@ -141,11 +141,11 @@ class TestMain(unittest.TestCase):
     """
 
     def test_panguplasim_modulus(self):
-        pangu_plasim = PanguPlasim(horizontal_resolution=(64, 128), num_levels=10)
-        pangu_plasim_modulus = PanguPlasimModulus(horizontal_resolution=(64, 128), num_levels=10)
-        surface = torch.randn(1, 4, 64, 128)
-        surface_mask = torch.randn(3, 64, 128)
-        upper_air = torch.randn(1, 5, 10, 64, 128)
+        pangu_plasim = PanguPlasim(horizontal_resolution=(65, 128), num_levels=10)
+        pangu_plasim_modulus = PanguPlasimModulus(horizontal_resolution=(65, 128), num_levels=10)
+        surface = torch.randn(1, 4, 65, 128)
+        surface_mask = torch.randn(3, 65, 128)
+        upper_air = torch.randn(1, 5, 10, 65, 128)
         output_surface_PP, output_upper_air_PP = pangu_plasim(surface, surface_mask, upper_air)
         output_surface_PPM, output_upper_air_PPM = pangu_plasim_modulus(surface, surface_mask, upper_air)
         self.assertEqual(output_surface_PP.shape, surface.shape)
@@ -154,6 +154,24 @@ class TestMain(unittest.TestCase):
         self.assertEqual(output_surface_PPM.shape, surface.shape)
         self.assertEqual(output_upper_air_PPM.shape, upper_air.shape)
         print('Modulus pangu_plasim okay!')
+
+    def test_panguplasim_modulus_cuda(self):
+        if torch.cuda.is_available():
+            pangu_plasim = PanguPlasim(horizontal_resolution=(65, 128), num_levels=10).cuda()
+            pangu_plasim_modulus = PanguPlasimModulus(horizontal_resolution=(65, 128), num_levels=10).cuda()
+            surface = torch.randn(1, 4, 65, 128).cuda()
+            surface_mask = torch.randn(3, 65, 128).cuda()
+            upper_air = torch.randn(1, 5, 10, 65, 128).cuda()
+            output_surface_PP, output_upper_air_PP = pangu_plasim(surface, surface_mask, upper_air)
+            output_surface_PPM, output_upper_air_PPM = pangu_plasim_modulus(surface, surface_mask, upper_air)
+            self.assertEqual(output_surface_PP.shape, surface.shape)
+            self.assertEqual(output_upper_air_PP.shape, upper_air.shape)
+            print('PyTorch pangu_plasim cuda okay!')
+            self.assertEqual(output_surface_PPM.shape, surface.shape)
+            self.assertEqual(output_upper_air_PPM.shape, upper_air.shape)
+            print('Modulus pangu_plasim cuda okay!')
+        else:
+            print('Skipping cuda test')
 
     def test_pangu_lite(self):
         pangu_lite = Pangu_lite(embed_dim=4, num_heads=(1, 1, 1, 1))
