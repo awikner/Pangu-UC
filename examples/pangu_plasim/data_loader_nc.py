@@ -26,16 +26,34 @@ def load_mean_std(mean_file, std_file):
        std_dict = {var: ds[var].values for var in ds.data_vars}
    return mean_dict, std_dict
 
+def datetime_class_from_calendar(calendar):
+    datetime_class_dict = {'standard': cftime.DatetimeGregorian,
+                           'Gregorian:': cftime.DatetimeGregorian,
+                           'noleap': cftime.DatetimeNoLeap,
+                           '365_day': cftime.DatetimeNoLeap,
+                           'proleptic_gregorian': cftime.DatetimeProlepticGregorian,
+                           'all_leap': cftime.DatetimeAllLeap,
+                           '366_day': cftime.DatetimeAllLeap,
+                           '360_day': cftime.Datetime360Day,
+                           'julian': cftime.DatetimeJulian}
+    return datetime_class_dict[calendar]
+
 class DatasetFromFolder(Dataset):
     def __init__(self, data_dir, year_start, year_end, flag, surface_variables=None,
                  upper_air_variables=None, boundary_variables=None, boundary_dir="boundary_variables",
                  surface_mean_file = "surface_mean.nc", surface_std_file = "surface_std.nc",
-                 upper_air_mean_file = "upper_air_mean.nc", upper_air_std_file = "upper_air_std.nc"):
+                 upper_air_mean_file = "upper_air_mean.nc", upper_air_std_file = "upper_air_std.nc",
+                 calendar = 'proleptic_gregorian', timedelta_hours = 6):
         super().__init__()
         self.data_dir = data_dir
         self.year_start = year_start
         self.year_end = year_end
         self.flag = flag
+        self.calendar = calendar
+        self.timedelta_hours = timedelta_hours
+        self.datetime_class = datetime_class_from_calendar(self.calendar)
+        self.timedelta = self.datetime_class(1, 1, 1, hour = self.timedelta_hours) - \
+                         self.datetime_class(1, 1, 1, hour = 0)
         self.surface_variables = surface_variables or []
         self.upper_air_variables = upper_air_variables or []
         self.boundary_variables = boundary_variables or []
@@ -64,8 +82,8 @@ class DatasetFromFolder(Dataset):
         return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data, torch.tensor([start_time, end_time])
 
     def _get_data(self, date):
-        year = date.astype("datetime64[Y]").astype(int) + 1970
-        file_name = join(self.data_dir, f"data_{year}.nc")
+        #year = date.astype("datetime64[Y]").astype(int) + 1970
+        file_name = join(self.data_dir, f"data_{date.year}.nc")
         ds = xr.open_dataset(file_name)
 
         time_index = ds['time'].values.astype('datetime64[D]').astype(int) == date.astype(int)
@@ -144,9 +162,9 @@ class DatasetFromFolder(Dataset):
         return xr.open_mfdataset(boundary_files, combine='nested', concat_dim='boundary')
 
     def _get_dates(self):
-        start_date = np.datetime64(f"{self.year_start}-01-01")
-        end_date = np.datetime64(f"{self.year_end + 1}-01-01")
-        return np.arange(start_date, end_date, dtype='datetime64[D]')
+        start_date = self.datetime_class(self.year_start, 1, 1)
+        end_date = self.datetime_class(self.year_end, 1, 1)
+        return xr.cftime_range(start_date, end_date, freq = '%dh' % self.timedelta_hours, calendar=self.calendar)
 
     def get_lat_lon(self):
         example_file = join(self.data_dir, f"data_{self.year_start}.nc")

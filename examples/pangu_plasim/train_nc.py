@@ -31,6 +31,8 @@ parser.add_argument("--surface_mean", type=str, default="surface_mean.nc", help=
 parser.add_argument("--surface_std", type=str, default="surface_std.nc", help="Name of surface std file in datadir")
 parser.add_argument("--upper_air_mean", type=str, default="upper_air_mean.nc", help="Name of upper_air mean file in datadir")
 parser.add_argument("--upper_air_std", type=str, default="upper_air_std.nc", help="Name of upper air std file in datadir")
+parser.add_argument("--calendar", type=str, default = 'proleptic_gregorian', help="Type of calendar for data (cftime)")
+parser.add_argument("--timedelta_hours", type=int, default=6, help="Prediction lead time in hours")
 
 if __name__ == "__main__":
     opt = parser.parse_args()
@@ -43,9 +45,19 @@ if __name__ == "__main__":
     UPPER_AIR_VARIABLES = opt.upper_air_variables
     BOUNDARY_VARIABLES = opt.boundary_variables
     BOUNDARY_DIR = opt.boundary_dir
+    SURFACE_MEAN = opt.surface_mean
+    SURFACE_STD  = opt.surface_std
+    UPPER_AIR_MEAN = opt.upper_air_mean
+    UPPER_AIR_STD  = opt.upper_air_std
+    CALENDAR = opt.calendar
+    TIMEDELTA_HOURS = opt.timedelta_hours
 
-    train_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES, BOUNDARY_VARIABLES, BOUNDARY_DIR)
-    val_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES, BOUNDARY_VARIABLES, BOUNDARY_DIR)
+    train_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
+                                  BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, UPPER_AIR_MEAN,
+                                  UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
+    val_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
+                                BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, UPPER_AIR_MEAN,
+                                UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
     train_loader = DataLoader(train_set, batch_size=1, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=1, shuffle=False)
 
