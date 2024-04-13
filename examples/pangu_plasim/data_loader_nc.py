@@ -82,10 +82,13 @@ class DatasetFromFolder(Dataset):
         return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data, torch.tensor([start_time, end_time])
 
     def _get_data(self, date):
-        #year = date.astype("datetime64[Y]").astype(int) + 1970
+        #year = date.astype("datetime64[Y]").astype(int) + 1970 Don't need this anymore
         file_name = join(self.data_dir, f"data_{date.year}.nc")
+        # Check to see how xarray "lazy loads" data. May just want to store all dataset handles instead of calling
+        # open_dataset again
         ds = xr.open_dataset(file_name)
 
+        #Convert to cftime
         time_index = ds['time'].values.astype('datetime64[D]').astype(int) == date.astype(int)
         time_value = ds['time'].values[time_index][0]
 
@@ -99,6 +102,8 @@ class DatasetFromFolder(Dataset):
         return surface_data, upper_air_data
 
     def _get_boundary_data(self, start_time, end_time):
+        # Need to check that this selects the correct dates and that they are selected from the leap vs. non-leap year
+        # variables.
         batch_boundary_ds = self.boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'), cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
         boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.boundary_variables], axis=0), dtype=torch.float32)
         return boundary_data
@@ -158,6 +163,7 @@ class DatasetFromFolder(Dataset):
         return normalize
 
     def _load_boundary_data(self):
+        # Check which variables have time axes and, if calendar has leap years, which variables are for leap years.
         boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir))]
         return xr.open_mfdataset(boundary_files, combine='nested', concat_dim='boundary')
 
