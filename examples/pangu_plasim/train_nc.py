@@ -25,8 +25,9 @@ parser.add_argument("--year_start", type=int, required=True, help="Start year fo
 parser.add_argument("--year_end", type=int, required=True, help="End year for the data")
 parser.add_argument("--surface_variables", nargs="+", required=True, help="List of surface variables to include")
 parser.add_argument("--upper_air_variables", nargs="+", required=True, help="List of upper air variables to include")
-parser.add_argument("--boundary_variables", nargs="+", required=True, help="List of boundary variables to include")
-parser.add_argument("--boundary_dir", type=str, default="boundary_variables", help="Directory containing boundary variable files")
+parser.add_argument("--constant_boundary_variables", nargs="+", required=True, help="List of constant boundary variables to include")
+parser.add_argument("--varying_boundary_variables", nargs="+", required=True, help="List of varying boundary variables to include")
+# parser.add_argument("--boundary_dir", type=str, default="boundary_variables", help="Directory containing boundary variable files")
 parser.add_argument("--surface_mean", type=str, default="surface_mean.nc", help="Name of surface mean file in datadir")
 parser.add_argument("--surface_std", type=str, default="surface_std.nc", help="Name of surface std file in datadir")
 parser.add_argument("--upper_air_mean", type=str, default="upper_air_mean.nc", help="Name of upper_air mean file in datadir")
@@ -43,7 +44,9 @@ if __name__ == "__main__":
     YEAR_END = opt.year_end
     SURFACE_VARIABLES = opt.surface_variables
     UPPER_AIR_VARIABLES = opt.upper_air_variables
-    BOUNDARY_VARIABLES = opt.boundary_variables
+    # BOUNDARY_VARIABLES = opt.boundary_variables
+    CONSTANT_BOUNDARY_VARIABLES = opt.constant_boundary_variables
+    VARYING_BOUNDARY_VARIABLES = opt.varying_boundary_variables
     BOUNDARY_DIR = opt.boundary_dir
     SURFACE_MEAN = opt.surface_mean
     SURFACE_STD  = opt.surface_std
@@ -53,11 +56,13 @@ if __name__ == "__main__":
     TIMEDELTA_HOURS = opt.timedelta_hours
 
     train_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
-                                  BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, UPPER_AIR_MEAN,
-                                  UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
+                                  BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
+                                  CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,
+                                  UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
     val_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
-                                BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, UPPER_AIR_MEAN,
-                                UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
+                                BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
+                                CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,
+                                UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
     train_loader = DataLoader(train_set, batch_size=1, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=1, shuffle=False)
 
@@ -93,9 +98,11 @@ if __name__ == "__main__":
                 input_upper_air = input_upper_air.cuda()
                 target_surface = target_surface.cuda()
                 target_upper_air = target_upper_air.cuda()
-                boundary_data = boundary_data.cuda()
+                # boundary_data = boundary_data.cuda()
+                constant_boundary_data = constant_boundary_data.cuda()
+                varying_boundary_data = varying_boundary_data.cuda()
 
-            output_surface, output_upper_air = PanguPlasim(input_surface, boundary_data, input_upper_air)
+            output_surface, output_upper_air = PanguPlasim(input_surface, constant_boundary_data,varying_boundary_data, input_upper_air)
 
             optimizer.zero_grad()
             surface_loss = surface_criterion(output_surface, target_surface)
@@ -119,9 +126,11 @@ if __name__ == "__main__":
                     val_input_upper_air = val_input_upper_air.cuda()
                     val_target_surface = val_target_surface.cuda()
                     val_target_upper_air = val_target_upper_air.cuda()
-                    boundary_data = boundary_data.cuda()
+                    # boundary_data = boundary_data.cuda()
+                    val_constant_boundary_data = val_constant_boundary_data.cuda()
+                    val_varying_boundary_data = val_varying_boundary_data.cuda()
 
-                val_output_surface, val_output_upper_air = PanguPlasim(val_input_surface, boundary_data, val_input_upper_air)
+                val_output_surface, val_output_upper_air = PanguPlasim(val_input_surface, val_constant_boundary_data,val_varying_boundary_data, val_input_upper_air)
 
                 val_output_surface = val_output_surface.squeeze(0)
                 val_output_upper_air = val_output_upper_air.squeeze(0)
@@ -140,7 +149,7 @@ if __name__ == "__main__":
                 val_bar.set_description(desc="[validating] Surface MSE: %.4f Upper Air MSE: %.4f" % (valing_results["surface_mse"] / valing_results["batch_sizes"], valing_results["upper_air_mse"] / valing_results["batch_sizes"]))
 
         os.makedirs("epochs", exist_ok=True)
-        torch.save(PanguPlasim.state_dict(), "epochs/pangu_lite_epoch_%d.pth" % (epoch))
+        torch.save(PanguPlasim.state_dict(), "epochs/pangu_plasim_epoch_%d.pth" % (epoch))
 
         results["loss"].append(running_results["loss"] / running_results["batch_sizes"])
         results["surface_mse"].append(valing_results["surface_mse"] / valing_results["batch_sizes"])
@@ -156,4 +165,3 @@ if __name__ == "__main__":
 
         data_frame.to_csv(os.path.join(save_root, "logs.csv"), index_label="Epoch")
 
-# python train.py --data_dir /path/to/data/dir --year_start 2000 --year_end 2010 --surface_variables var1 var2 var3 --upper_air_variables var4 var5 var6 --boundary_variables var7 var8 var9 --boundary_dir boundary_variables

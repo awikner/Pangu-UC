@@ -40,7 +40,9 @@ def datetime_class_from_calendar(calendar):
 
 class DatasetFromFolder(Dataset):
     def __init__(self, data_dir, year_start, year_end, flag, surface_variables=None,
-                 upper_air_variables=None, boundary_variables=None, boundary_dir="boundary_variables",
+                 upper_air_variables=None, 
+                 constant_boundary_variables=None, varying_boundary_variables=None,
+                 boundary_dir="boundary_variables",
                  surface_mean_file = "surface_mean.nc", surface_std_file = "surface_std.nc",
                  upper_air_mean_file = "upper_air_mean.nc", upper_air_std_file = "upper_air_std.nc",
                  calendar = 'proleptic_gregorian', timedelta_hours = 6):
@@ -56,8 +58,12 @@ class DatasetFromFolder(Dataset):
                          self.datetime_class(1, 1, 1, hour = 0)
         self.surface_variables = surface_variables or []
         self.upper_air_variables = upper_air_variables or []
-        self.boundary_variables = boundary_variables or []
+
+        self.constant_boundary_variables = constant_boundary_variables or []
+        self.varying_boundary_variables = varying_boundary_variables or []
+        self.constant_boundary_data = self._load_constant_boundary_data()
         self.boundary_dir = boundary_dir
+
 
         self.surface_mean, self.surface_std = load_mean_std(join(data_dir, surface_mean_file), join(data_dir, surface_std_file))
         self.upper_air_mean, self.upper_air_std = load_mean_std(join(data_dir, upper_air_mean_file), join(data_dir, upper_air_std_file))
@@ -75,11 +81,23 @@ class DatasetFromFolder(Dataset):
 
         start_time = self.dates[index].astype(int)
         end_time = self.dates[index + 1].astype(int)
-        boundary_data = self._get_boundary_data(start_time, end_time)
+        constant_boundary_data = self.constant_boundary_data
+        varying_boundary_data = self._get_boundary_data(start_time, end_time)
+        # boundary_data = self._get_boundary_data(start_time, end_time)
 
         if self.flag == "train":
-            return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data
-        return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data, torch.tensor([start_time, end_time])
+            return surface_t, upper_air_t, surface_t_1, upper_air_t_1, constant_boundary_data, varying_boundary_data
+        return surface_t, upper_air_t, surface_t_1, upper_air_t_1, constant_boundary_data, varying_boundary_data, torch.tensor([start_time, end_time])
+        # if self.flag == "train":
+        #     return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data
+        # return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data, torch.tensor([start_time, end_time])
+
+
+    def _load_constant_boundary_data(self):
+        constant_boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir)) if any(var in f for var in self.constant_boundary_variables)]
+        constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, combine='nested', concat_dim='boundary')
+        constant_boundary_data = torch.tensor(np.stack([constant_boundary_ds[var].values for var in self.constant_boundary_variables], axis=0), dtype=torch.float32)
+        return constant_boundary_data
 
     def _get_data(self, date):
         #year = date.astype("datetime64[Y]").astype(int) + 1970 Don't need this anymore
@@ -101,12 +119,16 @@ class DatasetFromFolder(Dataset):
 
         return surface_data, upper_air_data
 
+    # def _get_boundary_data(self, start_time, end_time):
+    #     # Need to check that this selects the correct dates and that they are selected from the leap vs. non-leap year
+    #     # variables.
+    #     batch_boundary_ds = self.boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'), cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
+    #     boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.boundary_variables], axis=0), dtype=torch.float32)
+    #     return boundary_data
     def _get_boundary_data(self, start_time, end_time):
-        # Need to check that this selects the correct dates and that they are selected from the leap vs. non-leap year
-        # variables.
         batch_boundary_ds = self.boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'), cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
-        boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.boundary_variables], axis=0), dtype=torch.float32)
-        return boundary_data
+        varying_boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.varying_boundary_variables], axis=0), dtype=torch.float32)
+        return varying_boundary_data
 
     def __len__(self):
         return len(self.dates) - 1
@@ -162,9 +184,12 @@ class DatasetFromFolder(Dataset):
 
         return normalize
 
+    # def _load_boundary_data(self):
+    #     # Check which variables have time axes and, if calendar has leap years, which variables are for leap years.
+    #     boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir))]
+    #     return xr.open_mfdataset(boundary_files, combine='nested', concat_dim='boundary')
     def _load_boundary_data(self):
-        # Check which variables have time axes and, if calendar has leap years, which variables are for leap years.
-        boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir))]
+        boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir)) if any(var in f for var in self.varying_boundary_variables)]
         return xr.open_mfdataset(boundary_files, combine='nested', concat_dim='boundary')
 
     def _get_dates(self):
