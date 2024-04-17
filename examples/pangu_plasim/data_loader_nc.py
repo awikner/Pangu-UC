@@ -3,6 +3,7 @@ from os import listdir
 from os.path import join
 import pickle
 import cftime
+import warnings
 from typing import Literal
 
 from torch.utils.data import Dataset
@@ -19,12 +20,12 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Normalize, Compose
 from dateutil.relativedelta import relativedelta
 
-def load_mean_std(mean_file, std_file):
+def load_mean_std(mean_file, std_file, datavars):
    with xr.open_dataset(mean_file) as ds:
-       mean_dict = {var: ds[var].values for var in ds.data_vars}
+       mean = torch.stack([torch.from_numpy(ds[var].values).to(torch.float32) for var in datavars], dim=0)
    with xr.open_dataset(std_file) as ds:
-       std_dict = {var: ds[var].values for var in ds.data_vars}
-   return mean_dict, std_dict
+       std = torch.stack([torch.from_numpy(ds[var].values).to(torch.float32) for var in datavars], dim=0)
+   return mean, std
 
 def datetime_class_from_calendar(calendar):
     datetime_class_dict = {'standard': cftime.DatetimeGregorian,
@@ -61,61 +62,89 @@ class DatasetFromFolder(Dataset):
 
         self.constant_boundary_variables = constant_boundary_variables or []
         self.varying_boundary_variables = varying_boundary_variables or []
-        self.constant_boundary_data = self._load_constant_boundary_data()
         self.boundary_dir = boundary_dir
+        self.constant_boundary_data = self._load_constant_boundary_data()
 
 
-        self.surface_mean, self.surface_std = load_mean_std(join(data_dir, surface_mean_file), join(data_dir, surface_std_file))
-        self.upper_air_mean, self.upper_air_std = load_mean_std(join(data_dir, upper_air_mean_file), join(data_dir, upper_air_std_file))
-
+        self.surface_mean, self.surface_std = load_mean_std(join(data_dir, surface_mean_file),
+                                                            join(data_dir, surface_std_file),
+                                                            self.surface_variables)
+        self.upper_air_mean, self.upper_air_std = load_mean_std(join(data_dir, upper_air_mean_file),
+                                                                join(data_dir, upper_air_std_file),
+                                                                self.upper_air_variables)
+        self.num_levels = self.upper_air_mean.size(-1)
         self.surface_transform = self._create_surface_transform()
         self.upper_air_transform = self._create_upper_air_transform()
-        self.channel_seq = self.surface_variables + self.upper_air_variables
+        self.surface_inv_transform = self._create_surface_inv_transform()
+        self.upper_air_inv_transform = self._create_upper_air_inv_transform()
+        #self.channel_seq = self.surface_variables + self.upper_air_variables
 
         self.boundary_ds = self._load_boundary_data()
         self.dates = self._get_dates()
+        self.data_ds = self._load_data()
 
     def __getitem__(self, index):
-        surface_t, upper_air_t = self._get_data(self.dates[index])
-        surface_t_1, upper_air_t_1 = self._get_data(self.dates[index + 1])
-
-        start_time = self.dates[index].astype(int)
-        end_time = self.dates[index + 1].astype(int)
+        start_time = self.dates[index]
+        end_time = self.dates[index + 1]
         constant_boundary_data = self.constant_boundary_data
-        varying_boundary_data = self._get_boundary_data(start_time, end_time)
+        varying_boundary_data = self._get_boundary_data(start_time)
+        surface_t, upper_air_t = self._get_data(start_time)
+        #Check to make sure that this works for array of indices. Will not work for list.
+        surface_t_1, upper_air_t_1 = self._get_data(end_time)
         # boundary_data = self._get_boundary_data(start_time, end_time)
 
         if self.flag == "train":
-            return surface_t, upper_air_t, surface_t_1, upper_air_t_1, constant_boundary_data, varying_boundary_data
-        return surface_t, upper_air_t, surface_t_1, upper_air_t_1, constant_boundary_data, varying_boundary_data, torch.tensor([start_time, end_time])
+            return surface_t, upper_air_t, surface_t_1, upper_air_t_1, varying_boundary_data
+        return surface_t, upper_air_t, surface_t_1, upper_air_t_1, varying_boundary_data, torch.tensor([start_time, end_time])
         # if self.flag == "train":
         #     return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data
         # return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data, torch.tensor([start_time, end_time])
 
 
     def _load_constant_boundary_data(self):
-        constant_boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir)) if any(var in f for var in self.constant_boundary_variables)]
-        constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, combine='nested', concat_dim='boundary')
-        constant_boundary_data = torch.tensor(np.stack([constant_boundary_ds[var].values for var in self.constant_boundary_variables], axis=0), dtype=torch.float32)
+        constant_boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in \
+                                   os.listdir(join(self.data_dir, self.boundary_dir)) \
+                                   if any(var in f for var in self.constant_boundary_variables)]
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore",
+                                    message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
+            constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, engine = 'netcdf4', parallel=False)
+        constant_boundary_data = torch.tensor(np.stack([constant_boundary_ds[var].values for var in \
+                                                        self.constant_boundary_variables], axis=0), dtype=torch.float32)
         return constant_boundary_data
+
+    def _load_data(self):
+        data_files = [join(self.data_dir, f'data_{year}.nc') for year in range(self.year_start, self.year_end)]
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore",
+                                    message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
+            data_ds = xr.open_mfdataset(data_files, chunks={'time': 1, 'lev': self.num_levels}, engine = 'netcdf4',
+                                        parallel=False)
+        return data_ds
 
     def _get_data(self, date):
         #year = date.astype("datetime64[Y]").astype(int) + 1970 Don't need this anymore
-        file_name = join(self.data_dir, f"data_{date.year}.nc")
+        #file_name = join(self.data_dir, f"data_{date.year}.nc")
         # Check to see how xarray "lazy loads" data. May just want to store all dataset handles instead of calling
         # open_dataset again
-        ds = xr.open_dataset(file_name)
+        #with warnings.catch_warnings():
+        #    warnings.filterwarnings("ignore",
+        #                            message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
+        #    ds = xr.open_mfdataset(file_name, chunks={'time': 1}, concat_dim='time')
+        #return ds
 
         #Convert to cftime
-        time_index = ds['time'].values.astype('datetime64[D]').astype(int) == date.astype(int)
-        time_value = ds['time'].values[time_index][0]
+        #time_index = ds['time'].values.astype('datetime64[D]').astype(int) == date.astype(int)
+        #time_value = ds['time'].values[time_index][0]
 
-        surface_data = torch.stack([torch.from_numpy(ds[var].sel(time=time_value).values.astype(np.float32)) for var in self.surface_variables], dim=0)
+        surface_data = torch.stack([torch.from_numpy(
+            self.data_ds[var].sel(time=date).values).to(torch.float32) for var in self.surface_variables], dim = 0)
         surface_data = self.surface_transform(surface_data)
 
-        upper_air_data = torch.stack([self.upper_air_transform[pl](
-            torch.from_numpy(np.stack([ds[var].sel(time=time_value, plev=pl).values for var in self.upper_air_variables], axis=0).astype(np.float32))
-        ) for pl in self.upper_air_std], dim=1)
+        upper_air_data = torch.stack([
+            torch.from_numpy(self.data_ds[var].sel(time=date).values).to(torch.float32)
+            for var in self.upper_air_variables], dim = 0)
+        upper_air_data = self.upper_air_transform(upper_air_data)
 
         return surface_data, upper_air_data
 
@@ -125,26 +154,49 @@ class DatasetFromFolder(Dataset):
     #     batch_boundary_ds = self.boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'), cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
     #     boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.boundary_variables], axis=0), dtype=torch.float32)
     #     return boundary_data
-    def _get_boundary_data(self, start_time, end_time):
-        batch_boundary_ds = self.boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'), cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
-        varying_boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.varying_boundary_variables], axis=0), dtype=torch.float32)
+    def _get_boundary_data(self, start_time):
+        start_time_boundary = self._get_boundary_date(start_time)
+        varying_boundary_data = torch.stack([torch.from_numpy(\
+            self.boundary_ds[var].sel(time=start_time_boundary).values).to(torch.float32)
+            for var in self.varying_boundary_variables], dim = 0)
         return varying_boundary_data
+
+    def _get_boundary_date(self, date):
+        if self._check_leap_year(date):
+            boundary_date = self.datetime_class(self.boundary_ds.leap_year, date.month, date.day, hour=date.hour)
+        else:
+            boundary_date = self.datetime_class(self.boundary_ds.noleap_year, date.month, date.day, hour=date.hour)
+        return boundary_date
 
     def __len__(self):
         return len(self.dates) - 1
 
+    #def _create_surface_transform(self):
+    #    mean_seq = [self.surface_mean[var] for var in self.surface_variables]
+    #    std_seq = [self.surface_std[var] for var in self.surface_variables]
+    #    return Normalize(mean_seq, std_seq)
+
+    #def _create_upper_air_transform(self):
+    #    normalize = {}
+    #    for pl in self.upper_air_std:
+    #        mean_seq = [self.upper_air_mean[var] for var in self.upper_air_variables]
+    #        std_seq = [self.upper_air_std[pl] for _ in self.upper_air_variables]
+    #        normalize[pl] = Normalize(mean_seq, std_seq)
+    #    return normalize
+
     def _create_surface_transform(self):
-        mean_seq = [self.surface_mean[var] for var in self.surface_variables]
-        std_seq = [self.surface_std[var] for var in self.surface_variables]
-        return Normalize(mean_seq, std_seq)
+        return lambda data: (data - self.surface_mean.reshape(-1, 1, 1))/self.surface_std.reshape(-1, 1, 1)
 
     def _create_upper_air_transform(self):
-        normalize = {}
-        for pl in self.upper_air_std:
-            mean_seq = [self.upper_air_mean[var] for var in self.upper_air_variables]
-            std_seq = [self.upper_air_std[pl] for _ in self.upper_air_variables]
-            normalize[pl] = Normalize(mean_seq, std_seq)
-        return normalize
+        return lambda data: (data - self.upper_air_mean.reshape(len(self.upper_air_variables), -1, 1, 1))/ \
+            self.upper_air_std.reshape(len(self.upper_air_variables), -1, 1, 1)
+
+    def _create_surface_inv_transform(self):
+        return lambda data: data * self.surface_std.reshape(-1, 1, 1) + self.surface_mean.reshape(-1, 1, 1)
+
+    def _create_upper_air_inv_transform(self):
+        return lambda data: data * self.upper_air_std.reshape(len(self.upper_air_variables), -1, 1, 1) + \
+            self.upper_air_std.reshape(len(self.upper_air_variables), -1, 1, 1)
 
 # If the order of the variables in the mean and standard deviation dictionaries is assumed to match the order in the dataset follow above or else
 # below implementation :
@@ -162,43 +214,64 @@ class DatasetFromFolder(Dataset):
     #         normalize[pl] = Normalize(mean_seq, std_seq)
     #     return normalize
 
-    def surface_inv_transform(self):
-        mean_seq = [self.surface_mean[var] for var in self.surface_variables]
-        std_seq = [self.surface_std[var] for var in self.surface_variables]
-        invTrans = Compose([
-            Normalize([0.] * len(mean_seq), [1 / x for x in std_seq]),
-            Normalize([-x for x in mean_seq], [1.] * len(std_seq))
-        ])
-        return invTrans
+    #def surface_inv_transform(self):
+    #    mean_seq = [self.surface_mean[var] for var in self.surface_variables]
+    #    std_seq = [self.surface_std[var] for var in self.surface_variables]
+    #    invTrans = Compose([
+    #        Normalize([0.] * len(mean_seq), [1 / x for x in std_seq]),
+    #        Normalize([-x for x in mean_seq], [1.] * len(std_seq))
+    #    ])
+    #    return invTrans
 
-    def upper_air_inv_transform(self):
-        normalize = {}
-        for pl in self.upper_air_std:
-            mean_seq = [self.upper_air_mean[var] for var in self.upper_air_variables]
-            std_seq = [self.upper_air_std[pl] for _ in self.upper_air_variables]
-            invTrans = Compose([
-                Normalize([0.] * len(mean_seq), [1 / x for x in std_seq]),
-                Normalize([-x for x in mean_seq], [1.] * len(std_seq))
-            ])
-            normalize[pl] = invTrans
-
-        return normalize
+    #def upper_air_inv_transform(self):
+    #    normalize = {}
+    #    for pl in self.upper_air_std:
+    #        mean_seq = [self.upper_air_mean[var] for var in self.upper_air_variables]
+    #        std_seq = [self.upper_air_std[pl] for _ in self.upper_air_variables]
+    #        invTrans = Compose([
+    #            Normalize([0.] * len(mean_seq), [1 / x for x in std_seq]),
+    #            Normalize([-x for x in mean_seq], [1.] * len(std_seq))
+    #        ])
+    #        normalize[pl] = invTrans
+    #
+    #    return normalize
 
     # def _load_boundary_data(self):
     #     # Check which variables have time axes and, if calendar has leap years, which variables are for leap years.
     #     boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir))]
-    #     return xr.open_mfdataset(boundary_files, combine='nested', concat_dim='boundary')
+    #     return xr.open_dataset(boundary_files, combine='nested', concat_dim='boundary')
     def _load_boundary_data(self):
-        boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir)) if any(var in f for var in self.varying_boundary_variables)]
-        return xr.open_mfdataset(boundary_files, combine='nested', concat_dim='boundary')
+        boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in \
+                                 os.listdir(join(self.data_dir, self.boundary_dir)) \
+                                 if any(var in f for var in self.varying_boundary_variables)]
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore",
+                                    message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
+            boundary_ds = xr.open_mfdataset(boundary_files, chunks={'time': 1}, engine = 'netcdf4', parallel=False)
+        has_year_zero = boundary_ds.time[0].item().has_year_zero
+        years = np.unique([date.year for date in boundary_ds.time.values])
+        isleap = [self._check_leap_year(year, has_year_zero) for year in years]
+        boundary_ds = boundary_ds.assign_attrs(noleap_year = years[np.logical_not(isleap)][0],
+                                               leap_year = years[isleap][0])
+        return boundary_ds
 
     def _get_dates(self):
         start_date = self.datetime_class(self.year_start, 1, 1)
         end_date = self.datetime_class(self.year_end, 1, 1)
-        return xr.cftime_range(start_date, end_date, freq = '%dh' % self.timedelta_hours, calendar=self.calendar)
+        return xr.cftime_range(start_date, end_date, freq = '%dh' % self.timedelta_hours, calendar=self.calendar,
+                               inclusive='left')
+
+    def _check_leap_year(self, date, has_year_zero=None):
+        if has_year_zero is None:
+            return cftime.is_leap_year(date.year, calendar = self.calendar, has_year_zero=date.has_year_zero)
+        else:
+            return cftime.is_leap_year(date, calendar=self.calendar, has_year_zero=has_year_zero)
 
     def get_lat_lon(self):
         example_file = join(self.data_dir, f"data_{self.year_start}.nc")
-        ds = xr.open_dataset(example_file)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore",
+                                    message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
+            ds = xr.open_mfdataset(example_file, engine = 'netcdf4', parallel=False)
         return ds["lat"].values, ds["lon"].values
 

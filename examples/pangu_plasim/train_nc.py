@@ -79,8 +79,8 @@ if __name__ == "__main__":
         surface_criterion.cuda()
         upper_air_criterion.cuda()
 
-    surface_invTrans = train_set.surface_inv_transform()
-    upper_air_invTrans = train_set.upper_air_inv_transform()
+    surface_invTrans = train_set.surface_inv_transform
+    upper_air_invTrans = train_set.upper_air_inv_transform
 
     optimizer = torch.optim.Adam(PanguPlasim.parameters(), lr=5e-4, weight_decay=3e-6)
 
