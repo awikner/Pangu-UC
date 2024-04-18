@@ -440,19 +440,18 @@ class PanguPlasim(nn.Module):
         self.patchrecovery2d = PatchRecovery2D(horizontal_resolution, patch_size[1:], 2 * embed_dim, num_surface_vars)
         self.patchrecovery3d = PatchRecovery3D(atmo_resolution, patch_size, 2 * embed_dim, num_atmo_vars)
 
-    def forward(self, surface, surface_mask, upper_air):
+    def forward(self, surface_in, constant_boundary, varying_boundary, upper_air_in):
         """
         Args:
             surface (torch.Tensor): 2D n_lat=721, n_lon=1440, chans=4.
             surface_mask (torch.Tensor): 2D n_lat=721, n_lon=1440, chans=3.
             upper_air (torch.Tensor): 3D n_pl=13, n_lat=721, n_lon=1440, chans=5.
         """
-        if self.predict_delta:
-            surface_in = torch.clone(surface)
-            upper_air_in = torch.clone(upper_air)
-        surface = torch.concat([surface, surface_mask.unsqueeze(0)], dim=1)
+        if len(constant_boundary.size()) == 3:
+            constant_boundary = constant_bounday.unsqueeze(0)
+        surface = torch.concat([surface_in, constant_boundary, varying_boundary], dim=1)
         surface = self.patchembed2d(surface)
-        upper_air = self.patchembed3d(upper_air)
+        upper_air = self.patchembed3d(upper_air_in)
 
         x = torch.concat([surface.unsqueeze(2), upper_air], dim=2)
         B, C, Pl, Lat, Lon = x.shape
