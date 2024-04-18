@@ -1,6 +1,7 @@
 import torch
 import numpy as np
-
+import sys
+sys.path.append('/glade/work/awikner/Pangu-UC')
 #import modulus
 from dataclasses import dataclass
 
@@ -16,7 +17,8 @@ import unittest
 #class TestMain(unittest.TestCase):
 #    def test_loader_init(self):
 #datadir = 'C:\\Users\\user\\Documents\\PLASIM\\data\\plasim_reduced_data'
-datadir = '/Users/Alexander/Documents/PLASIM/data/plasim_reduced_data'
+#datadir = '/Users/Alexander/Documents/PLASIM/data/plasim_reduced_data'
+datadir = '/glade/derecho/scratch/awikner/PLASIM/data/plasim_reduced_data'
 boundary_dir = 'boundary_vars'
 upper_air_vars = ['ta', 'ua', 'va', 'hus', 'clw']
 surface_vars = ['pl', 'tas']

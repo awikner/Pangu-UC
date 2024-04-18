@@ -14,6 +14,7 @@ import pandas as pd
 # vscode Relative path
 import sys
 sys.path.append("../../")
+sys.path.append("/glade/work/awikner/Pangu-UC")
 
 from weatherlearn.models import PanguPlasim
 from data_loader_nc import DatasetFromFolder
@@ -21,15 +22,16 @@ from data_loader_nc import DatasetFromFolder
 parser = argparse.ArgumentParser(description="Train Pangu_Plasim Models")
 parser.add_argument("--num_epochs", default=50, type=int, help="train epoch number")
 parser.add_argument("--data_dir", type=str, required=True, help="Path to the data directory")
+parser.add_argument("--boundary_dir", type=str, default='boundary_vars', help="Path to boundary data directory")
 parser.add_argument("--train_year_start", type=int, required=True, help="Start year for the training data")
 parser.add_argument("--train_year_end", type=int, required=True, help="End year for the training data")
 parser.add_argument("--val_year_start", type=int, required=True, help="Start year for the validation data")
 parser.add_argument("--val_year_end", type=int, required=True, help="End year for the validation data")
 parser.add_argument("--batch_size", type=int, default=1, help="Number of samples per batch")
-parser.add_argument("--surface_variables", nargs="+", required=True, help="List of surface variables to include")
-parser.add_argument("--upper_air_variables", nargs="+", required=True, help="List of upper air variables to include")
-parser.add_argument("--constant_boundary_variables", nargs="+", required=True, help="List of constant boundary variables to include")
-parser.add_argument("--varying_boundary_variables", nargs="+", required=True, help="List of varying boundary variables to include")
+parser.add_argument("--surface_variables", nargs="*", required=True, help="List of surface variables to include")
+parser.add_argument("--upper_air_variables", nargs="*", required=True, help="List of upper air variables to include")
+parser.add_argument("--constant_boundary_variables", nargs="*", required=True, help="List of constant boundary variables to include")
+parser.add_argument("--varying_boundary_variables", nargs="*", required=True, help="List of varying boundary variables to include")
 parser.add_argument("--surface_mean", type=str, default="surface_mean.nc", help="Name of surface mean file in datadir")
 parser.add_argument("--surface_std", type=str, default="surface_std.nc", help="Name of surface std file in datadir")
 parser.add_argument("--upper_air_mean", type=str, default="upper_air_mean.nc", help="Name of upper_air mean file in datadir")
@@ -42,16 +44,15 @@ if __name__ == "__main__":
 
     NUM_EPOCHS = opt.num_epochs
     DATA_DIR = opt.data_dir
+    BOUNDARY_DIR = opt.boundary_dir
     YEAR_START_TRAIN = opt.train_year_start
     YEAR_END_TRAIN = opt.train_year_end
     YEAR_START_VAL = opt.val_year_start
     YEAR_END_VAL = opt.val_year_end
     SURFACE_VARIABLES = opt.surface_variables
     UPPER_AIR_VARIABLES = opt.upper_air_variables
-    # BOUNDARY_VARIABLES = opt.boundary_variables
     CONSTANT_BOUNDARY_VARIABLES = opt.constant_boundary_variables
     VARYING_BOUNDARY_VARIABLES = opt.varying_boundary_variables
-    BOUNDARY_DIR = opt.boundary_dir
     SURFACE_MEAN = opt.surface_mean
     SURFACE_STD  = opt.surface_std
     UPPER_AIR_MEAN = opt.upper_air_mean
@@ -61,19 +62,25 @@ if __name__ == "__main__":
     BATCH_SIZE=opt.batch_size
 
     train_set = DatasetFromFolder(DATA_DIR, YEAR_START_TRAIN, YEAR_END_TRAIN, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
-                                  BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
-                                  CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,
+                                  CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
                                   UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
     val_set = DatasetFromFolder(DATA_DIR, YEAR_START_VAL, YEAR_END_VAL, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
-                                BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
-                                CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,
+                                CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
                                 UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
     train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
 
+    constant_boundary_data = train_set.constant_boundary_data.unsqueeze(0) * torch.ones(BATCH_SIZE, 1, 1, 1)
+    if torch.cuda.is_available():
+        constant_boundary_data = constant_boundary_data.cuda()
+
     lat, lon = train_set.get_lat_lon()
 
-    PanguPlasim = PanguPlasim()
+    PanguPlasim = PanguPlasim(horizontal_resolution = (65, 128),
+                              num_levels = 10, num_atmo_vars = len(UPPER_AIR_VARIABLES),
+                              num_surface_vars = len(SURFACE_VARIABLES),
+                              num_boundary_vars = len(CONSTANT_BOUNDARY_VARIABLES) + len(VARYING_BOUNDARY_VARIABLES),
+                              patch_size = (2,2,2))
     print("# parameters: ", sum(param.numel() for param in PanguPlasim.parameters()))
 
     surface_criterion = nn.L1Loss()
@@ -96,18 +103,16 @@ if __name__ == "__main__":
         running_results = {"batch_sizes": 0, "loss": 0}
 
         PanguPlasim.train()
-        for input_surface, input_upper_air, target_surface, target_upper_air, boundary_data in train_bar:
+        for input_surface, input_upper_air, target_surface, target_upper_air, varying_boundary_data in train_bar:
             batch_size = input_surface.size(0)
             if torch.cuda.is_available():
                 input_surface = input_surface.cuda()
                 input_upper_air = input_upper_air.cuda()
                 target_surface = target_surface.cuda()
                 target_upper_air = target_upper_air.cuda()
-                # boundary_data = boundary_data.cuda()
-                constant_boundary_data = constant_boundary_data.cuda()
                 varying_boundary_data = varying_boundary_data.cuda()
 
-            output_surface, output_upper_air = PanguPlasim(input_surface, constant_boundary_data,varying_boundary_data, input_upper_air)
+            output_surface, output_upper_air = PanguPlasim(input_surface, constant_boundary_data, varying_boundary_data, input_upper_air)
 
             optimizer.zero_grad()
             surface_loss = surface_criterion(output_surface, target_surface)
@@ -124,18 +129,16 @@ if __name__ == "__main__":
         with torch.no_grad():
             val_bar = tqdm(val_loader)
             valing_results = {"batch_sizes": 0, "surface_mse": 0, "upper_air_mse": 0}
-            for val_input_surface, val_input_upper_air, val_target_surface, val_target_upper_air, boundary_data, times in val_bar:
+            for val_input_surface, val_input_upper_air, val_target_surface, val_target_upper_air, val_varying_boundary_data, times in val_bar:
                 batch_size = val_input_surface.size(0)
                 if torch.cuda.is_available():
                     val_input_surface = val_input_surface.cuda()
                     val_input_upper_air = val_input_upper_air.cuda()
                     val_target_surface = val_target_surface.cuda()
                     val_target_upper_air = val_target_upper_air.cuda()
-                    # boundary_data = boundary_data.cuda()
-                    val_constant_boundary_data = val_constant_boundary_data.cuda()
                     val_varying_boundary_data = val_varying_boundary_data.cuda()
 
-                val_output_surface, val_output_upper_air = PanguPlasim(val_input_surface, val_constant_boundary_data,val_varying_boundary_data, val_input_upper_air)
+                val_output_surface, val_output_upper_air = PanguPlasim(val_input_surface, constant_boundary_data, val_varying_boundary_data, val_input_upper_air)
 
                 val_output_surface = val_output_surface.squeeze(0)
                 val_output_upper_air = val_output_upper_air.squeeze(0)
