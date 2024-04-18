@@ -16,18 +16,20 @@ import sys
 sys.path.append("../../")
 
 from weatherlearn.models import PanguPlasim
-from data_utils import DatasetFromFolder
+from data_loader_nc import DatasetFromFolder
 
 parser = argparse.ArgumentParser(description="Train Pangu_Plasim Models")
 parser.add_argument("--num_epochs", default=50, type=int, help="train epoch number")
 parser.add_argument("--data_dir", type=str, required=True, help="Path to the data directory")
-parser.add_argument("--year_start", type=int, required=True, help="Start year for the data")
-parser.add_argument("--year_end", type=int, required=True, help="End year for the data")
+parser.add_argument("--train_year_start", type=int, required=True, help="Start year for the training data")
+parser.add_argument("--train_year_end", type=int, required=True, help="End year for the training data")
+parser.add_argument("--val_year_start", type=int, required=True, help="Start year for the validation data")
+parser.add_argument("--val_year_end", type=int, required=True, help="End year for the validation data")
+parser.add_argument("--batch_size", type=int, default=1, help="Number of samples per batch")
 parser.add_argument("--surface_variables", nargs="+", required=True, help="List of surface variables to include")
 parser.add_argument("--upper_air_variables", nargs="+", required=True, help="List of upper air variables to include")
 parser.add_argument("--constant_boundary_variables", nargs="+", required=True, help="List of constant boundary variables to include")
 parser.add_argument("--varying_boundary_variables", nargs="+", required=True, help="List of varying boundary variables to include")
-# parser.add_argument("--boundary_dir", type=str, default="boundary_variables", help="Directory containing boundary variable files")
 parser.add_argument("--surface_mean", type=str, default="surface_mean.nc", help="Name of surface mean file in datadir")
 parser.add_argument("--surface_std", type=str, default="surface_std.nc", help="Name of surface std file in datadir")
 parser.add_argument("--upper_air_mean", type=str, default="upper_air_mean.nc", help="Name of upper_air mean file in datadir")
@@ -40,8 +42,10 @@ if __name__ == "__main__":
 
     NUM_EPOCHS = opt.num_epochs
     DATA_DIR = opt.data_dir
-    YEAR_START = opt.year_start
-    YEAR_END = opt.year_end
+    YEAR_START_TRAIN = opt.train_year_start
+    YEAR_END_TRAIN = opt.train_year_end
+    YEAR_START_VAL = opt.val_year_start
+    YEAR_END_VAL = opt.val_year_end
     SURFACE_VARIABLES = opt.surface_variables
     UPPER_AIR_VARIABLES = opt.upper_air_variables
     # BOUNDARY_VARIABLES = opt.boundary_variables
@@ -54,17 +58,18 @@ if __name__ == "__main__":
     UPPER_AIR_STD  = opt.upper_air_std
     CALENDAR = opt.calendar
     TIMEDELTA_HOURS = opt.timedelta_hours
+    BATCH_SIZE=opt.batch_size
 
-    train_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
+    train_set = DatasetFromFolder(DATA_DIR, YEAR_START_TRAIN, YEAR_END_TRAIN, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
                                   BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
                                   CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,
                                   UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
-    val_set = DatasetFromFolder(DATA_DIR, YEAR_START, YEAR_END, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
+    val_set = DatasetFromFolder(DATA_DIR, YEAR_START_VAL, YEAR_END_VAL, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
                                 BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
                                 CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,
                                 UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
-    train_loader = DataLoader(train_set, batch_size=1, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
 
     lat, lon = train_set.get_lat_lon()
 
