@@ -448,7 +448,7 @@ class PanguPlasim(nn.Module):
             upper_air (torch.Tensor): 3D n_pl=13, n_lat=721, n_lon=1440, chans=5.
         """
         if len(constant_boundary.size()) == 3:
-            constant_boundary = constant_bounday.unsqueeze(0)
+            constant_boundary = constant_boundary.unsqueeze(0)
         surface = torch.concat([surface_in, constant_boundary, varying_boundary], dim=1)
         surface = self.patchembed2d(surface)
         upper_air = self.patchembed3d(upper_air_in)
