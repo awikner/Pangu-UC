@@ -370,6 +370,9 @@ class PanguPlasim(nn.Module):
         if not drop_path:
             drop_path = np.append(np.linspace(0, 0.2, np.sum(depths[:2])),
                 np.linspace(0.2, 0, np.sum(depths[2:]))).tolist()
+        self.num_surface_vars = num_surface_vars
+        self.num_atmo_vars = num_atmo_vars
+        self.num_boundary_vars = num_boundary_vars
         atmo_resolution = tuple([num_levels]) + horizontal_resolution
         depths_cumsum = np.cumsum(depths).astype(int)
         self.predict_delta = predict_delta
@@ -473,7 +476,6 @@ class PanguPlasim(nn.Module):
 
             output_surface_delta = self.patchrecovery2d(output_surface_delta)
             output_upper_air_delta = self.patchrecovery3d(output_upper_air_delta)
-
             output_surface = surface_in + output_surface_delta
             output_upper_air = upper_air_in + output_upper_air_delta
         else:
