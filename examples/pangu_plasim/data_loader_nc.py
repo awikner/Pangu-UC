@@ -16,8 +16,6 @@ import numpy as np
 from datetime import datetime
 from typing import Literal
 
-from torch.utils.data import Dataset
-from torchvision.transforms import Normalize, Compose
 from dateutil.relativedelta import relativedelta
 
 def load_mean_std(mean_file, std_file, datavars):
@@ -89,16 +87,11 @@ class DatasetFromFolder(Dataset):
         constant_boundary_data = self.constant_boundary_data
         varying_boundary_data = self._get_boundary_data(start_time)
         surface_t, upper_air_t = self._get_data(start_time)
-        #Check to make sure that this works for array of indices. Will not work for list.
         surface_t_1, upper_air_t_1 = self._get_data(end_time)
-        # boundary_data = self._get_boundary_data(start_time, end_time)
 
         if self.flag == "train":
             return surface_t, upper_air_t, surface_t_1, upper_air_t_1, varying_boundary_data
         return surface_t, upper_air_t, surface_t_1, upper_air_t_1, varying_boundary_data, torch.tensor([start_time, end_time])
-        # if self.flag == "train":
-        #     return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data
-        # return surface_t, upper_air_t, surface_t_1, upper_air_t_1, boundary_data, torch.tensor([start_time, end_time])
 
 
     def _load_constant_boundary_data(self):
@@ -109,8 +102,12 @@ class DatasetFromFolder(Dataset):
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
             constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, engine = 'netcdf4', parallel=False)
-        constant_boundary_data = torch.tensor(np.stack([constant_boundary_ds[var].values for var in \
-                                                        self.constant_boundary_variables], axis=0), dtype=torch.float32)
+        constant_boundary_masked = []
+        for var in self.constant_boundary_variables:
+            constant_boundary_tensor = torch.tensor(constant_boundary_ds[var].values, dtype = torch.float32)
+            constant_boundary_masked.append(
+                torch.masked.masked_tensor(constant_boundary_tensor, torch.isnan(constant_boundary_tensor)))
+        constant_boundary_data = torch.stack(constant_boundary_masked, dim=0)
         return constant_boundary_data
 
     def _load_data(self):
@@ -123,20 +120,6 @@ class DatasetFromFolder(Dataset):
         return data_ds
 
     def _get_data(self, date):
-        #year = date.astype("datetime64[Y]").astype(int) + 1970 Don't need this anymore
-        #file_name = join(self.data_dir, f"data_{date.year}.nc")
-        # Check to see how xarray "lazy loads" data. May just want to store all dataset handles instead of calling
-        # open_dataset again
-        #with warnings.catch_warnings():
-        #    warnings.filterwarnings("ignore",
-        #                            message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
-        #    ds = xr.open_mfdataset(file_name, chunks={'time': 1}, concat_dim='time')
-        #return ds
-
-        #Convert to cftime
-        #time_index = ds['time'].values.astype('datetime64[D]').astype(int) == date.astype(int)
-        #time_value = ds['time'].values[time_index][0]
-
         surface_data = torch.stack([torch.from_numpy(
             self.data_ds[var].sel(time=date).values).to(torch.float32) for var in self.surface_variables], dim = 0)
         surface_data = self.surface_transform(surface_data)
@@ -148,12 +131,6 @@ class DatasetFromFolder(Dataset):
 
         return surface_data, upper_air_data
 
-    # def _get_boundary_data(self, start_time, end_time):
-    #     # Need to check that this selects the correct dates and that they are selected from the leap vs. non-leap year
-    #     # variables.
-    #     batch_boundary_ds = self.boundary_ds.sel(time=slice(cftime.DatetimeNoLeap(start_time, 'seconds since 1970-01-01'), cftime.DatetimeNoLeap(end_time, 'seconds since 1970-01-01')))
-    #     boundary_data = torch.tensor(np.stack([batch_boundary_ds[var].values for var in self.boundary_variables], axis=0), dtype=torch.float32)
-    #     return boundary_data
     def _get_boundary_data(self, start_time):
         start_time_boundary = self._get_boundary_date(start_time)
         varying_boundary_data = torch.stack([torch.from_numpy(\
@@ -170,19 +147,6 @@ class DatasetFromFolder(Dataset):
 
     def __len__(self):
         return len(self.dates) - 1
-
-    #def _create_surface_transform(self):
-    #    mean_seq = [self.surface_mean[var] for var in self.surface_variables]
-    #    std_seq = [self.surface_std[var] for var in self.surface_variables]
-    #    return Normalize(mean_seq, std_seq)
-
-    #def _create_upper_air_transform(self):
-    #    normalize = {}
-    #    for pl in self.upper_air_std:
-    #        mean_seq = [self.upper_air_mean[var] for var in self.upper_air_variables]
-    #        std_seq = [self.upper_air_std[pl] for _ in self.upper_air_variables]
-    #        normalize[pl] = Normalize(mean_seq, std_seq)
-    #    return normalize
 
     def _create_surface_transform(self):
         return lambda data: (data - self.surface_mean.reshape(-1, 1, 1))/self.surface_std.reshape(-1, 1, 1)
@@ -241,6 +205,7 @@ class DatasetFromFolder(Dataset):
     #     boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in os.listdir(join(self.data_dir, self.boundary_dir))]
     #     return xr.open_dataset(boundary_files, combine='nested', concat_dim='boundary')
     def _load_boundary_data(self):
+        print('Loading varying boundary from %s' % join(self.data_dir, self.boundary_dir))
         boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in \
                                  os.listdir(join(self.data_dir, self.boundary_dir)) \
                                  if any(var in f for var in self.varying_boundary_variables)]
