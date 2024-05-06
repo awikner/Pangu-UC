@@ -44,8 +44,14 @@ class DatasetFromFolder(Dataset):
                  boundary_dir="boundary_variables",
                  surface_mean_file = "surface_mean.nc", surface_std_file = "surface_std.nc",
                  upper_air_mean_file = "upper_air_mean.nc", upper_air_std_file = "upper_air_std.nc",
+                 varying_boundary_mean_file = "varying_boundary_mean.nc",
+                 varying_boundary_std_file = "varying_boundary_std.nc",
                  calendar = 'proleptic_gregorian', timedelta_hours = 6):
         super().__init__()
+        self.mask_fill = {'lsm': 0.,
+                          'sst': 270.,
+                          'sic': 0.,
+                          }
         self.data_dir = data_dir
         self.year_start = year_start
         self.year_end = year_end
@@ -70,8 +76,14 @@ class DatasetFromFolder(Dataset):
         self.upper_air_mean, self.upper_air_std = load_mean_std(join(data_dir, upper_air_mean_file),
                                                                 join(data_dir, upper_air_std_file),
                                                                 self.upper_air_variables)
+        self.varying_boundary_mean, self.varying_boundary_std = load_mean_std(join(data_dir, boundary_dir,
+                                                                                   varying_boundary_mean_file),
+                                                                              join(data_dir, boundary_dir,
+                                                                                   varying_boundary_std_file),
+                                                                self.varying_boundary_variables)
         self.num_levels = self.upper_air_mean.size(-1)
         self.surface_transform = self._create_surface_transform()
+        self.boundary_transform = self._create_boundary_transform()
         self.upper_air_transform = self._create_upper_air_transform()
         self.surface_inv_transform = self._create_surface_inv_transform()
         self.upper_air_inv_transform = self._create_upper_air_inv_transform()
@@ -84,8 +96,8 @@ class DatasetFromFolder(Dataset):
     def __getitem__(self, index):
         start_time = self.dates[index]
         end_time = self.dates[index + 1]
-        constant_boundary_data = self.constant_boundary_data
         varying_boundary_data = self._get_boundary_data(start_time)
+        varying_boundary_data = self.boundary_transform(varying_boundary_data)
         surface_t, upper_air_t = self._get_data(start_time)
         surface_t_1, upper_air_t_1 = self._get_data(end_time)
 
@@ -104,9 +116,11 @@ class DatasetFromFolder(Dataset):
             constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, engine = 'netcdf4', parallel=False)
         constant_boundary_masked = []
         for var in self.constant_boundary_variables:
-            constant_boundary_tensor = torch.tensor(constant_boundary_ds[var].values, dtype = torch.float32)
-            constant_boundary_masked.append(
-                torch.masked.masked_tensor(constant_boundary_tensor, torch.isnan(constant_boundary_tensor)))
+            constant_boundary_tensor = torch.from_numpy(constant_boundary_ds[var].values).to(torch.float32)
+            nans = torch.isnan(constant_boundary_tensor)
+            if torch.any(nans):
+                constant_boundary_tensor = constant_boundary_tensor.masked_fill(nans, self.mask_fill[var])
+            constant_boundary_masked.append(constant_boundary_tensor)
         constant_boundary_data = torch.stack(constant_boundary_masked, dim=0)
         return constant_boundary_data
 
@@ -133,9 +147,15 @@ class DatasetFromFolder(Dataset):
 
     def _get_boundary_data(self, start_time):
         start_time_boundary = self._get_boundary_date(start_time)
-        varying_boundary_data = torch.stack([torch.from_numpy(\
-            self.boundary_ds[var].sel(time=start_time_boundary).values).to(torch.float32)
-            for var in self.varying_boundary_variables], dim = 0)
+        varying_boundary_masked = []
+        for var in self.varying_boundary_variables:
+            varying_boundary_tensor = torch.from_numpy(self.boundary_ds[var].sel(time=start_time_boundary).values).\
+                to(torch.float32)
+            nans = torch.isnan(varying_boundary_tensor)
+            if torch.any(nans):
+                varying_boundary_tensor = varying_boundary_tensor.masked_fill(nans, self.mask_fill[var])
+            varying_boundary_masked.append(varying_boundary_tensor)
+        varying_boundary_data = torch.stack(varying_boundary_masked, dim = 0)
         return varying_boundary_data
 
     def _get_boundary_date(self, date):
@@ -151,6 +171,10 @@ class DatasetFromFolder(Dataset):
     def _create_surface_transform(self):
         return lambda data: (data - self.surface_mean.reshape(-1, 1, 1))/self.surface_std.reshape(-1, 1, 1)
 
+    def _create_boundary_transform(self):
+        return lambda data: (data - self.varying_boundary_mean.reshape(-1, 1, 1))/\
+                            self.varying_boundary_std.reshape(-1, 1, 1)
+
     def _create_upper_air_transform(self):
         return lambda data: (data - self.upper_air_mean.reshape(len(self.upper_air_variables), -1, 1, 1))/ \
             self.upper_air_std.reshape(len(self.upper_air_variables), -1, 1, 1)
@@ -161,6 +185,8 @@ class DatasetFromFolder(Dataset):
     def _create_upper_air_inv_transform(self):
         return lambda data: data * self.upper_air_std.reshape(len(self.upper_air_variables), -1, 1, 1) + \
             self.upper_air_std.reshape(len(self.upper_air_variables), -1, 1, 1)
+
+
 
 # If the order of the variables in the mean and standard deviation dictionaries is assumed to match the order in the dataset follow above or else
 # below implementation :

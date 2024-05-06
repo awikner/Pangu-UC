@@ -36,6 +36,8 @@ parser.add_argument("--surface_mean", type=str, default="surface_mean.nc", help=
 parser.add_argument("--surface_std", type=str, default="surface_std.nc", help="Name of surface std file in datadir")
 parser.add_argument("--upper_air_mean", type=str, default="upper_air_mean.nc", help="Name of upper_air mean file in datadir")
 parser.add_argument("--upper_air_std", type=str, default="upper_air_std.nc", help="Name of upper air std file in datadir")
+parser.add_argument("--boundary_mean", type=str, default="boundary_mean.nc", help="Name of boundary mean file in datadir/boundary_dir")
+parser.add_argument("--boundary_std", type=str, default="boundary_std.nc", help="Name of boundary std file in datadir/boundary_dir")
 parser.add_argument("--calendar", type=str, default = 'proleptic_gregorian', help="Type of calendar for data (cftime)")
 parser.add_argument("--timedelta_hours", type=int, default=6, help="Prediction lead time in hours")
 
@@ -57,16 +59,18 @@ if __name__ == "__main__":
     SURFACE_STD  = opt.surface_std
     UPPER_AIR_MEAN = opt.upper_air_mean
     UPPER_AIR_STD  = opt.upper_air_std
+    BOUNDARY_MEAN = opt.boundary_mean
+    BOUNDARY_STD = opt.boundary_std
     CALENDAR = opt.calendar
     TIMEDELTA_HOURS = opt.timedelta_hours
-    BATCH_SIZE=opt.batch_size
+    BATCH_SIZE = opt.batch_size
 
     train_set = DatasetFromFolder(DATA_DIR, YEAR_START_TRAIN, YEAR_END_TRAIN, "train", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
                                   CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES,BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
-                                  UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
+                                  UPPER_AIR_MEAN,UPPER_AIR_STD, BOUNDARY_MEAN, BOUNDARY_STD, CALENDAR, TIMEDELTA_HOURS)
     val_set = DatasetFromFolder(DATA_DIR, YEAR_START_VAL, YEAR_END_VAL, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
                                 CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
-                                UPPER_AIR_MEAN,UPPER_AIR_STD, CALENDAR, TIMEDELTA_HOURS)
+                                UPPER_AIR_MEAN,UPPER_AIR_STD, BOUNDARY_MEAN, BOUNDARY_STD, CALENDAR, TIMEDELTA_HOURS)
     train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -76,7 +80,7 @@ if __name__ == "__main__":
 
     lat, lon = train_set.get_lat_lon()
 
-    PanguPlasim = PanguPlasim(horizontal_resolution = (65, 128),
+    PanguPlasim = PanguPlasim(horizontal_resolution = (64, 128),
                               num_levels = 10, num_atmo_vars = len(UPPER_AIR_VARIABLES),
                               num_surface_vars = len(SURFACE_VARIABLES),
                               num_boundary_vars = len(CONSTANT_BOUNDARY_VARIABLES) + len(VARYING_BOUNDARY_VARIABLES),
@@ -93,6 +97,9 @@ if __name__ == "__main__":
 
     surface_invTrans = train_set.surface_inv_transform
     upper_air_invTrans = train_set.upper_air_inv_transform
+
+    surface_Trans = train_set.surface_transform
+    upper_air_Trans = train_set.upper_air_transform
 
     optimizer = torch.optim.Adam(PanguPlasim.parameters(), lr=5e-4, weight_decay=3e-6)
 

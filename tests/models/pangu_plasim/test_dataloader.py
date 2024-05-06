@@ -27,16 +27,19 @@ boundary_vars_constant = ['lsm', 'z0', 'sg']
 start_year = 100
 end_year = 102
 flag = 'train'
-surface_mean_file = 'plasim_surface_test_mean.nc'
-surface_std_file = 'plasim_surface_test_stds.nc'
-upper_air_mean_file = 'plasim_test_mean.nc'
-upper_air_std_file = 'plasim_test_std.nc'
+surface_mean_file = 'plasim_test_51_150_surface_mean.nc'
+surface_std_file = 'plasim_test_51_150_surface_std.nc'
+upper_air_mean_file = 'plasim_test_51_150_mean.nc'
+upper_air_std_file = 'plasim_test_51_150_std.nc'
+boundary_mean_file = 'plasim_test_51_150_boundary_mean.nc'
+boundary_std_file = 'plasim_test_51_150_boundary_std.nc'
 calendar = 'proleptic_gregorian'
 timedelta_hours = 6
 dataset = DatasetFromFolder(datadir, start_year, end_year, flag, surface_vars,
                             upper_air_vars, boundary_vars_constant, boundary_vars_yearly,
                             boundary_dir, surface_mean_file, surface_std_file, upper_air_mean_file,
-                            upper_air_std_file, calendar, timedelta_hours)
+                            upper_air_std_file, boundary_mean_file, boundary_std_file,
+                            calendar = calendar, timedelta_hours=timedelta_hours)
 dataloader = tqdm(DataLoader(dataset, batch_size=32, shuffle=True))
 for input_surface, input_upper_air, target_surface, target_upper_air, \
         boundary_data in dataloader:
