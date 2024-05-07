@@ -15,9 +15,12 @@ import pandas as pd
 import sys
 sys.path.append("../../")
 sys.path.append("/glade/work/awikner/Pangu-UC")
+sys.path.append("/eagle/MDClimSim/awikner/Pangu-UC")
 
 from weatherlearn.models import PanguPlasim
 from data_loader_nc import DatasetFromFolder
+import dask
+dask.config.set(scheduler='synchronous')
 
 parser = argparse.ArgumentParser(description="Train Pangu_Plasim Models")
 parser.add_argument("--num_epochs", default=50, type=int, help="train epoch number")
@@ -71,8 +74,8 @@ if __name__ == "__main__":
     val_set = DatasetFromFolder(DATA_DIR, YEAR_START_VAL, YEAR_END_VAL, "valid", SURFACE_VARIABLES, UPPER_AIR_VARIABLES,
                                 CONSTANT_BOUNDARY_VARIABLES, VARYING_BOUNDARY_VARIABLES, BOUNDARY_DIR, SURFACE_MEAN, SURFACE_STD, 
                                 UPPER_AIR_MEAN,UPPER_AIR_STD, BOUNDARY_MEAN, BOUNDARY_STD, CALENDAR, TIMEDELTA_HOURS)
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers = BATCH_SIZE)
+    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False, num_workers = BATCH_SIZE)
 
     constant_boundary_data = train_set.constant_boundary_data.unsqueeze(0) * torch.ones(BATCH_SIZE, 1, 1, 1)
     if torch.cuda.is_available():
