@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Literal
 
 from dateutil.relativedelta import relativedelta
+import dask
+dask.config.set(scheduler='synchronous')
 
 def load_mean_std(mean_file, std_file, datavars):
    with xr.open_dataset(mean_file) as ds:
@@ -119,7 +121,7 @@ class DatasetFromFolder(Dataset):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
-            constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, engine = 'netcdf4', parallel=False)
+            constant_boundary_ds = xr.open_mfdataset(constant_boundary_files, engine = 'netcdf4', parallel = True)
         constant_boundary_masked = []
         for var in self.constant_boundary_variables:
             constant_boundary_tensor = torch.from_numpy(constant_boundary_ds[var].values).to(torch.float32)
@@ -141,8 +143,8 @@ class DatasetFromFolder(Dataset):
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
             for file in data_files:
-                data_ds = xr.open_mfdataset(file, chunks={'time': 1, 'lev': self.num_levels}, engine = 'netcdf4',
-                                            parallel=False, decode_cf = False)
+                data_ds = xr.open_mfdataset(file, chunks={'time': 1, 'lev': self.num_levels}, engine = 'netcdf4', parallel = True,
+                                            decode_cf = False)
                 data_dss.append(data_ds)
         return data_dss
 
@@ -254,9 +256,9 @@ class DatasetFromFolder(Dataset):
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
             boundary_ds_leap = xr.open_mfdataset(boundary_leap_files, chunks={'time': 1}, engine = 'netcdf4',
-                                                 parallel=False, decode_cf = False)
+                                                 parallel = True, decode_cf = False)
             boundary_ds_noleap = xr.open_mfdataset(boundary_noleap_files, chunks={'time': 1}, engine = 'netcdf4',
-                                                 parallel=False, decode_cf = False)
+                                                 parallel = True, decode_cf = False)
         return [boundary_ds_noleap, boundary_ds_leap]
 
     def _get_dates(self, hour_step = 6.):
@@ -277,6 +279,6 @@ class DatasetFromFolder(Dataset):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
-            ds = xr.open_mfdataset(example_file, engine = 'netcdf4', parallel=False)
+            ds = xr.open_mfdataset(example_file, engine = 'netcdf4', parallel = True)
         return ds["lat"].values, ds["lon"].values
 
