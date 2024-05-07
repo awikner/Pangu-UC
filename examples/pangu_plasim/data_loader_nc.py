@@ -46,8 +46,9 @@ class DatasetFromFolder(Dataset):
                  upper_air_mean_file = "upper_air_mean.nc", upper_air_std_file = "upper_air_std.nc",
                  varying_boundary_mean_file = "varying_boundary_mean.nc",
                  varying_boundary_std_file = "varying_boundary_std.nc",
-                 calendar = 'proleptic_gregorian', timedelta_hours = 6):
+                 calendar = 'proleptic_gregorian', timedelta_hours = 6, has_year_zero = False):
         super().__init__()
+        self.has_year_zero = has_year_zero
         self.mask_fill = {'lsm': 0.,
                           'sst': 270.,
                           'sic': 0.,
@@ -89,17 +90,22 @@ class DatasetFromFolder(Dataset):
         self.upper_air_inv_transform = self._create_upper_air_inv_transform()
         #self.channel_seq = self.surface_variables + self.upper_air_variables
 
-        self.boundary_ds = self._load_boundary_data()
-        self.dates = self._get_dates()
-        self.data_ds = self._load_data()
+        self.boundary_dss = self._load_boundary_data()
+        self.dates = self._get_dates(hour_step = timedelta_hours)
+        self.data_dss = self._load_data()
 
     def __getitem__(self, index):
         start_time = self.dates[index]
         end_time = self.dates[index + 1]
-        varying_boundary_data = self._get_boundary_data(start_time)
+        start_hour_diff = start_time - self.year_start_hours
+        start_idx = np.where(start_hour_diff >= 0)[0][-1]
+        start_leap_idx = 1 if self.is_leap_year[start_idx] else 0
+        end_hour_diff = end_time - self.year_start_hours
+        end_idx = np.where(end_hour_diff >= 0)[0][-1]
+        varying_boundary_data = self._get_boundary_data(start_hour_diff[start_idx], start_leap_idx)
         varying_boundary_data = self.boundary_transform(varying_boundary_data)
-        surface_t, upper_air_t = self._get_data(start_time)
-        surface_t_1, upper_air_t_1 = self._get_data(end_time)
+        surface_t, upper_air_t = self._get_data(start_idx, start_hour_diff[start_idx])
+        surface_t_1, upper_air_t_1 = self._get_data(end_idx, end_hour_diff[end_idx])
 
         if self.flag == "train":
             return surface_t, upper_air_t, surface_t_1, upper_air_t_1, varying_boundary_data
@@ -126,30 +132,37 @@ class DatasetFromFolder(Dataset):
 
     def _load_data(self):
         data_files = [join(self.data_dir, f'data_{year}.nc') for year in range(self.year_start, self.year_end)]
+        self.year_start_hours = [(self.datetime_class(year, 1, 1) - self.datetime_class(self.year_start, 1, 1)).days*24.
+                                 for year in range(self.year_start, self.year_end)]
+        self.is_leap_year = [self._check_leap_year(year, self.has_year_zero) for year in
+                             range(self.year_start, self.year_end)]
+        data_dss = []
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
-            data_ds = xr.open_mfdataset(data_files, chunks={'time': 1, 'lev': self.num_levels}, engine = 'netcdf4',
-                                        parallel=False)
-        return data_ds
+            for file in data_files:
+                data_ds = xr.open_mfdataset(file, chunks={'time': 1, 'lev': self.num_levels}, engine = 'netcdf4',
+                                            parallel=False, decode_cf = False)
+                data_dss.append(data_ds)
+        return data_dss
 
-    def _get_data(self, date):
+    def _get_data(self, year, hour):
+
         surface_data = torch.stack([torch.from_numpy(
-            self.data_ds[var].sel(time=date).values).to(torch.float32) for var in self.surface_variables], dim = 0)
+            self.data_dss[year][var].sel(time=hour).values).to(torch.float32) for var in self.surface_variables], dim = 0)
         surface_data = self.surface_transform(surface_data)
 
         upper_air_data = torch.stack([
-            torch.from_numpy(self.data_ds[var].sel(time=date).values).to(torch.float32)
+            torch.from_numpy(self.data_dss[year][var].sel(time=hour).values).to(torch.float32)
             for var in self.upper_air_variables], dim = 0)
         upper_air_data = self.upper_air_transform(upper_air_data)
 
         return surface_data, upper_air_data
 
-    def _get_boundary_data(self, start_time):
-        start_time_boundary = self._get_boundary_date(start_time)
+    def _get_boundary_data(self, start_time_boundary, leap_idx):
         varying_boundary_masked = []
         for var in self.varying_boundary_variables:
-            varying_boundary_tensor = torch.from_numpy(self.boundary_ds[var].sel(time=start_time_boundary).values).\
+            varying_boundary_tensor = torch.from_numpy(self.boundary_dss[leap_idx][var].sel(time=start_time_boundary).values).\
                 to(torch.float32)
             nans = torch.isnan(varying_boundary_tensor)
             if torch.any(nans):
@@ -158,12 +171,12 @@ class DatasetFromFolder(Dataset):
         varying_boundary_data = torch.stack(varying_boundary_masked, dim = 0)
         return varying_boundary_data
 
-    def _get_boundary_date(self, date):
-        if self._check_leap_year(date):
-            boundary_date = self.datetime_class(self.boundary_ds.leap_year, date.month, date.day, hour=date.hour)
-        else:
-            boundary_date = self.datetime_class(self.boundary_ds.noleap_year, date.month, date.day, hour=date.hour)
-        return boundary_date
+    #def _get_boundary_date(self, date):
+    #    if self._check_leap_year(date):
+    #        boundary_date = self.datetime_class(self.boundary_ds.leap_year, date.month, date.day, hour=date.hour)
+    #    else:
+    #        boundary_date = self.datetime_class(self.boundary_ds.noleap_year, date.month, date.day, hour=date.hour)
+    #    return boundary_date
 
     def __len__(self):
         return len(self.dates) - 1
@@ -235,22 +248,23 @@ class DatasetFromFolder(Dataset):
         boundary_files = [join(self.data_dir, self.boundary_dir, f) for f in \
                                  os.listdir(join(self.data_dir, self.boundary_dir)) \
                                  if any(var in f for var in self.varying_boundary_variables)]
+        boundary_leap_files = [file for file in boundary_files if '_leap' in os.path.basename(file)]
+        boundary_noleap_files = [file for file in boundary_files if '_leap' not in os.path.basename(file)]
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore",
                                     message='^.*Unable to decode time axis into full numpy.datetime64 objects.*$')
-            boundary_ds = xr.open_mfdataset(boundary_files, chunks={'time': 1}, engine = 'netcdf4', parallel=False)
-        has_year_zero = boundary_ds.time[0].item().has_year_zero
-        years = np.unique([date.year for date in boundary_ds.time.values])
-        isleap = [self._check_leap_year(year, has_year_zero) for year in years]
-        boundary_ds = boundary_ds.assign_attrs(noleap_year = years[np.logical_not(isleap)][0],
-                                               leap_year = years[isleap][0])
-        return boundary_ds
+            boundary_ds_leap = xr.open_mfdataset(boundary_leap_files, chunks={'time': 1}, engine = 'netcdf4',
+                                                 parallel=False, decode_cf = False)
+            boundary_ds_noleap = xr.open_mfdataset(boundary_noleap_files, chunks={'time': 1}, engine = 'netcdf4',
+                                                 parallel=False, decode_cf = False)
+        return [boundary_ds_noleap, boundary_ds_leap]
 
-    def _get_dates(self):
+    def _get_dates(self, hour_step = 6.):
         start_date = self.datetime_class(self.year_start, 1, 1)
         end_date = self.datetime_class(self.year_end, 1, 1)
-        return xr.cftime_range(start_date, end_date, freq = '%dh' % self.timedelta_hours, calendar=self.calendar,
-                               inclusive='left')
+        hours = (end_date - start_date).days * 24.
+        date_range = np.arange(0., hours, hour_step)
+        return date_range
 
     def _check_leap_year(self, date, has_year_zero=None):
         if has_year_zero is None:
