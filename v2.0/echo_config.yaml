@@ -1,0 +1,50 @@
+study_name: weather_optimization_study   # Name of the Optuna study
+# storage: sqlite:///example.db            # Database to store the study results
+direction: minimize                      # Direction of optimization ('minimize' or 'maximize')
+n_trials: 100                            # Number of trials to run
+
+sampler:                                 # Sampler settings
+  name: TPESampler
+  seed: 42
+
+pruner:                                  # Pruner settings
+  name: MedianPruner
+  interval_steps: 10
+
+# Hyperparameters to optimize
+hyperparameters:
+  lr: 
+    distribution: loguniform
+    low: 1e-5
+    high: 1e-2
+
+  weight_decay: 
+    distribution: loguniform
+    low: 1e-6
+    high: 1e-3
+
+  drop_path: 
+    distribution: uniform
+    low: 0.0
+    high: 0.5
+
+  # batch_size: 
+  #   distribution: categorical
+  #   choices: [16, 32, 64]
+
+  # max_epochs: 
+  #   distribution: int
+  #   low: 5
+  #   high: 50
+
+  scheduler: 
+    distribution: categorical
+    choices: ['CosineAnnealingLR', 'ReduceLROnPlateau']
+
+# Other parameters
+params:
+  config_file: /scratch/user/u.pr160292/PanguWeather/v2.0/model_config.yaml   # Path to your base config file
+  run_num: 1                                    # Initial run number, increment this for each run
+  enable_amp: true                              # Enable AMP for mixed precision training
+  log_interval: 10                              # Logging interval for training progress
+  checkpoint_interval: 100                      # Interval for saving checkpoints
